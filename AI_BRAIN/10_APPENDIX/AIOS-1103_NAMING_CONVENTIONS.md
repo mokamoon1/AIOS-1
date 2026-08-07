@@ -88,9 +88,9 @@ Example:
 
 02_DOMAIN
 
-03_REQUIREMENTS
+03_INVESTMENT
 
-04_DESIGN
+04_AGENTS
 
 05_DATA
 
@@ -100,9 +100,9 @@ Example:
 
 08_DEPLOYMENT
 
-09_GOVERNANCE
+09_OPERATIONS
 
-110_APPENDIX
+10_APPENDIX
 ```
 
 ---
@@ -118,7 +118,7 @@ AIOS-XXXX_DOCUMENT_NAME.md
 Examples:
 
 ```text
-AIOS-101_PROJECT_CHARTER.md
+AIOS-101_SYSTEM_ARCHITECTURE.md
 
 AIOS-401_SYSTEM_DESIGN.md
 
@@ -486,17 +486,17 @@ release/v1.2.0
 Architectural Decision Records:
 
 ```text
-ADR-0001-title.md
+ADR-000N_UPPER_SNAKE_CASE.md
 ```
 
 Examples:
 
 ```text
-ADR-0001-project-architecture.md
+ADR-0001_DATABASE_SELECTION.md
 
-ADR-0002-provider-abstraction.md
+ADR-0002_DECISION_AUTHORITY.md
 
-ADR-0003-risk-engine.md
+ADR-0003_STRUCTURE_ALIGNMENT.md
 ```
 
 ADR numbers shall never change.
@@ -552,7 +552,16 @@ The Naming Conventions are considered successful when:
 
 ---
 
-# 22. Document Status
+# 22. Change Log
+
+| Version | Change |
+|---|---|
+| 1.0.0 | Initial release of Naming Conventions |
+| 1.0.1 | Aligned directory naming with ADR-0003 approved structure; corrected documentation and ADR naming examples |
+
+---
+
+# 23. Document Status
 
 **Document ID:** AIOS-1103_NAMING_CONVENTIONS
 

@@ -61,13 +61,13 @@ Domain Knowledge
 
         ▼
 
-Requirements
+Investment
 
         │
 
         ▼
 
-Design
+Agents
 
         │
 
@@ -97,7 +97,7 @@ Deployment
 
         ▼
 
-Governance
+Operations
 
         │
 
@@ -157,7 +157,7 @@ Contains:
 
 ---
 
-## 03_REQUIREMENTS
+## 03_INVESTMENT
 
 Purpose:
 
@@ -172,7 +172,7 @@ Contains:
 
 ---
 
-## 04_DESIGN
+## 04_AGENTS
 
 Purpose:
 
@@ -245,7 +245,7 @@ Contains:
 
 ---
 
-## 09_GOVERNANCE
+## 09_OPERATIONS
 
 Purpose:
 
@@ -261,7 +261,7 @@ Contains:
 
 ---
 
-## 110_APPENDIX
+## 10_APPENDIX
 
 Purpose:
 
@@ -280,7 +280,7 @@ Contains:
 # 5. Document Relationship Map
 
 ```text id="e8k3mv"
-Requirements
+Investment
 
       ↓
 
@@ -288,7 +288,7 @@ Architecture
 
       ↓
 
-Design
+Agents
 
       ↓
 
@@ -304,7 +304,7 @@ Deployment
 
       ↓
 
-Governance
+Operations
 
       ↓
 
@@ -336,7 +336,7 @@ Start with:
 ```text id="z7m2kp"
 01_ARCHITECTURE
 
-04_DESIGN
+04_AGENTS
 
 06_DEVELOPMENT
 ```
@@ -360,7 +360,7 @@ Start with:
 ```text id="k8n4wp"
 08_DEPLOYMENT
 
-09_GOVERNANCE
+09_OPERATIONS
 ```
 
 ---
@@ -370,7 +370,7 @@ Start with:
 Start with:
 
 ```text id="s6q2mv"
-110_APPENDIX
+10_APPENDIX
 ```
 
 ---
@@ -435,7 +435,16 @@ The Reference Index is considered successful when:
 
 ---
 
-# 12. Document Status
+# 12. Change Log
+
+| Version | Change |
+|---|---|
+| 1.0.0 | Initial release of Reference Index |
+| 1.0.1 | Aligned documentation structure and relationship maps with ADR-0003 approved structure |
+
+---
+
+# 13. Document Status
 
 **Document ID:** AIOS-1107_REFERENCE_INDEX
 
