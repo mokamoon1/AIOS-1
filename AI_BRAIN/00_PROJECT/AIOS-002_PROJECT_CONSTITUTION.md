@@ -83,6 +83,16 @@ The system must not create its own independent religious classification.
 No security may enter analysis, portfolio construction, or trading workflow before passing the Shariah compliance check.
 
 Flow:
+Market Data
+|
+v
+Shariah Verification
+|
+v
+Analysis
+|
+v
+Portfolio Decision
 
 ---
 
