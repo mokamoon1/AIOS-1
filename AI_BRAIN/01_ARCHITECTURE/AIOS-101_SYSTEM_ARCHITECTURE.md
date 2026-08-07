@@ -35,7 +35,42 @@ The architecture prioritizes:
 ---
 
 # 3. High-Level System Overview
+External Data Sources
 
+    |
+
+    v
+
+Data Acquisition Layer
+
+    |
+
+    v
+
+Data Processing Layer
+
+    |
+
+    v
+
+AI Intelligence Layer
+
+    |
+
+    v
+
+Decision Engine
+
+    |
+
+    v
+
+Portfolio Management
+
+    |
+
+    v
+    
 ---
 
 # 4. Main Architecture Layers
@@ -172,7 +207,124 @@ Communication backbone.
 Allows components to exchange events without direct dependency.
 
 Example:
+Market Data Updated
+
+    |
+
+    v
+
+Event Bus
+
+    |
+
+    +----> Analysis Agent
+
+    +----> Risk Agent
+
+    +----> Portfolio Agent
 
 ---
 
 # 6. Investment Decision Flow
+
+
+Shariah Verification
+
+    ↓
+
+Market Data Collection
+
+    ↓
+
+Analysis Agents
+
+    ↓
+
+Risk Evaluation
+
+    ↓
+
+CIO Agent Review
+
+    ↓
+
+Portfolio Decision
+
+    ↓
+    
+---
+
+# 7. Design Principles
+
+## Modularity
+
+Every component must have a clear responsibility.
+
+---
+
+## Separation of Concerns
+
+Data collection, analysis, decision, and execution must remain separated.
+
+---
+
+## Explainability
+
+Every important action must have a recorded reason.
+
+---
+
+## Security
+
+Critical operations require validation.
+
+---
+
+## Scalability
+
+Future expansion must not require redesigning the core system.
+
+---
+
+# 8. Version 1 Architecture Limits
+
+Included:
+
+- Single user.
+- US equities.
+- Paper trading.
+- Shariah filtering.
+- AI-assisted analysis.
+
+Excluded:
+
+- High-frequency trading.
+- Multiple users.
+- Cloud distribution.
+
+---
+
+# 9. Future Architecture Evolution
+
+Future versions may introduce:
+
+- Distributed agents.
+- Cloud deployment.
+- Multiple investment accounts.
+- Advanced machine learning pipelines.
+
+---
+
+# 10. Document Status
+
+Document:
+
+AIOS-101_SYSTEM_ARCHITECTURE
+
+Version:
+
+1.0.0
+
+Status:
+
+APPROVED

@@ -1,43 +1,249 @@
-# AIOS-103: Event Bus Design
+# AIOS-103_EVENT_BUS_DESIGN
 
-## Overview
-The Event Bus is the central nervous system of AIOS, enabling decoupled communication between components.
+## Document Information
 
-## Design Goals
-- **Loose Coupling**: Publishers and subscribers are independent.
-- **High Throughput**: Support for high-frequency event streaming.
-- **Reliability**: Guaranteed delivery with at-least-once semantics.
-- **Observability**: Full traceability of event flows.
+Document ID: AIOS-103
+Title: Event Bus Design
+Version: 1.0.0
+Status: APPROVED
+Category: Architecture Document
 
-## Event Structure
-```json
-{
-  "eventId": "uuid",
-  "eventType": "domain.event.name",
-  "timestamp": "ISO8601",
-  "source": "component-name",
-  "payload": {},
-  "metadata": {
-    "correlationId": "uuid",
-    "causationId": "uuid"
-  }
-}
+---
+
+# 1. Purpose
+
+This document defines the internal communication architecture of AIOS.
+
+The Event Bus provides a controlled communication layer between system components, AI agents, and services.
+
+---
+
+# 2. Event Bus Concept
+
+The Event Bus is the communication backbone of AIOS.
+
+It allows components to communicate without creating direct dependencies.
+
+Architecture:
+
+```
+Component
+
+     |
+
+     v
+
+Event Bus
+
+     |
+
+     v
+
+Other Components
 ```
 
-## Topology
-- **Topics**: Hierarchical topic naming (e.g., `aios.agents.task.completed`)
-- **Partitions**: Sharded by event type or agent ID for parallelism.
-- **Consumer Groups**: Load-balanced consumption within services.
+---
 
-## Delivery Guarantees
-- At-least-once delivery (default)
-- Exactly-once processing (optional, idempotent consumers)
+# 3. Why Event Bus Is Required
 
-## Backpressure
-- Dynamic buffer sizing
-- Circuit breaker patterns
-- Dead letter queues for failed events
+Without Event Bus:
 
-## References
-- AIOS-101: System Architecture
-- AIOS-104: Core Engine Design
+* Components become tightly connected.
+* Changes become difficult.
+* Testing becomes harder.
+* System expansion becomes limited.
+
+With Event Bus:
+
+* Components remain independent.
+* New agents can be added easily.
+* Communication becomes organized.
+
+---
+
+# 4. Event Structure
+
+Every event must contain:
+
+```
+Event ID
+
+Timestamp
+
+Source
+
+Event Type
+
+Payload
+
+Priority
+
+Status
+```
+
+---
+
+# 5. Event Types
+
+## Market Events
+
+Examples:
+
+```
+MARKET_DATA_UPDATED
+PRICE_CHANGED
+VOLUME_CHANGED
+```
+
+Purpose:
+
+Notify analysis agents about market updates.
+
+---
+
+## Shariah Events
+
+Examples:
+
+```
+SHARIAH_LIST_UPDATED
+SECURITY_APPROVED
+SECURITY_REJECTED
+```
+
+Purpose:
+
+Control investment eligibility.
+
+---
+
+## Analysis Events
+
+Examples:
+
+```
+TECHNICAL_ANALYSIS_COMPLETED
+FUNDAMENTAL_ANALYSIS_COMPLETED
+SIGNAL_GENERATED
+```
+
+Purpose:
+
+Share analysis results.
+
+---
+
+## Risk Events
+
+Examples:
+
+```
+RISK_CHECK_COMPLETED
+RISK_LIMIT_EXCEEDED
+```
+
+Purpose:
+
+Protect portfolio decisions.
+
+---
+
+## Portfolio Events
+
+Examples:
+
+```
+PORTFOLIO_UPDATED
+ALLOCATION_PROPOSED
+```
+
+Purpose:
+
+Manage investment allocation.
+
+---
+
+# 6. AIOS Decision Event Flow
+
+```
+Shariah Verification
+
+        |
+
+        v
+
+Market Data Event
+
+        |
+
+        v
+
+Analysis Events
+
+        |
+
+        v
+
+Risk Evaluation Event
+
+        |
+
+        v
+
+CIO Decision Event
+
+        |
+
+        v
+
+Portfolio Action Event
+```
+
+---
+
+# 7. Event Rules
+
+All events must:
+
+* Have a clear source.
+* Have a defined format.
+* Be logged.
+* Be traceable.
+* Have validation.
+
+---
+
+# 8. Security Rules
+
+The Event Bus must prevent:
+
+* Unauthorized messages.
+* Invalid data.
+* Agent permission violations.
+
+---
+
+# 9. Future Expansion
+
+Future versions may support:
+
+* Distributed event systems.
+* Cloud messaging.
+* Real-time market streaming.
+* Multiple AIOS instances.
+
+---
+
+# 10. Document Status
+
+Document:
+
+AIOS-103_EVENT_BUS_DESIGN
+
+Version:
+
+1.0.0
+
+Status:
+
+APPROVED
