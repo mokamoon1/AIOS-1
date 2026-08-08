@@ -68,9 +68,9 @@ class HealthMonitor:
         providers = component_map.get("providers")
         providers_connected = 0
         if isinstance(providers, Mapping):
-            raw = providers.get("connected")
-            if isinstance(raw, int):
-                providers_connected = raw
+            # ProviderManager.status() returns {provider_name: is_connected_bool}
+            # Count providers that are connected (True)
+            providers_connected = sum(1 for v in providers.values() if v is True)
 
         engine_metrics_list = list(engine_metrics) if engine_metrics else []
         return HealthSnapshot(

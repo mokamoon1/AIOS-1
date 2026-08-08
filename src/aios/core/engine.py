@@ -50,7 +50,7 @@ from aios.engines.types import EngineState
 from aios.events import Event, EventPriority, InMemoryEventBus
 from aios.logging import setup_audit_handler, setup_logging
 from aios.portfolio import PortfolioService
-from aios.providers import ProviderManager
+from aios.providers import ProviderFactory, ProviderManager
 
 
 class CoreState(str, Enum):
@@ -280,6 +280,13 @@ class CoreEngine:
             )
             return
         paper_broker = PaperBroker("paper", "paper-account")
+        # Restore account state from database if available (AIOS-407 section 4.3)
+        try:
+            account = data_access.get_broker_account("paper")
+            paper_broker.restore_account(account)
+        except Exception:
+            # No persisted account; broker starts with default initial_cash
+            self._logger.info("No persisted broker account found; starting with default initial cash")
         self._broker_service = BrokerService(paper_broker, store=data_access)
         self._paper_coordinator = PaperOrderCoordinator(self._broker_service, data_access)
         self._logger.info("Paper Broker wired for environment %s", environment.value)
@@ -322,7 +329,12 @@ class CoreEngine:
 
     async def _start_providers(self) -> None:
         self._provider_manager = ProviderManager()
-        self._logger.info("Provider Manager initialized (no providers connected)")
+        factory = ProviderFactory(self._session_factory)
+        providers = factory.create_all_providers(self._settings.providers, environment=self._active_environment)
+        for provider in providers:
+            self._provider_manager.register(provider)
+        await self._provider_manager.connect_all()
+        self._logger.info("Provider Manager initialized with %d connected providers", len(providers))
 
     def _validate_ready(self) -> None:
         missing: list[str] = []

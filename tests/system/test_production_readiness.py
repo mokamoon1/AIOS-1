@@ -222,7 +222,8 @@ class TestHealthSnapshotOverBootedCore:
             assert snapshot.agent_ready == 7
             assert snapshot.engine_loaded == 6
             assert snapshot.engine_ready == 6
-            assert snapshot.providers_connected == 0
+            # Phase 7: TESTING environment has 3 mock providers
+            assert snapshot.providers_connected == 3
         finally:
             await core.shutdown()
 

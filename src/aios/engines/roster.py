@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, ClassVar
+from typing import Any, Callable, ClassVar
 
 from aios.analysis import (
     atr,
@@ -715,6 +715,20 @@ class DecisionEngine(Engine):
         }
     )
 
+    def __init__(
+        self,
+        *,
+        engine_id: str | None = None,
+        bus: EventBus | None = None,
+        logger: logging.Logger | None = None,
+        data_access: DataAccess | None = None,
+        on_decision: Callable[[InvestmentDecision], None] | None = None,
+    ) -> None:
+        super().__init__(
+            engine_id=engine_id, bus=bus, logger=logger, data_access=data_access
+        )
+        self._on_decision = on_decision
+
     def validate_input(self, engine_input: EngineInput) -> bool:
         return bool(engine_input.payload.get("symbol"))
 
@@ -825,6 +839,16 @@ class DecisionEngine(Engine):
         )
 
         persisted = self._persist_decision(decision_record)
+
+        # Call the on_decision callback if set and decision is actionable (BUY/SELL)
+        if self._on_decision is not None and decision in (DecisionAction.BUY, DecisionAction.SELL):
+            try:
+                self._on_decision(decision_record)
+            except Exception as exc:
+                self.logger.exception(
+                    "Error in on_decision callback for %s: %s", symbol, exc
+                )
+
         output = {
             "symbol": symbol,
             "decision": decision.value,
@@ -889,6 +913,7 @@ def create_engine(
     bus: EventBus | None = None,
     logger: logging.Logger | None = None,
     data_access: DataAccess | None = None,
+    on_decision: Callable[[InvestmentDecision], None] | None = None,
 ) -> Engine:
     """Create an engine instance for a Phase 1 roster type.
 
@@ -899,6 +924,14 @@ def create_engine(
     """
     if engine_type not in ENGINE_CLASSES:
         raise KeyError(f"Engine type {engine_type!r} is not in the Phase 1 engine roster")
+    if engine_type is EngineType.DECISION:
+        return DecisionEngine(
+            engine_id=engine_id,
+            bus=bus,
+            logger=logger,
+            data_access=data_access,
+            on_decision=on_decision,
+        )
     return ENGINE_CLASSES[engine_type](
         engine_id=engine_id, bus=bus, logger=logger, data_access=data_access
     )

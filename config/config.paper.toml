@@ -25,3 +25,20 @@ file_backup_count = 5
 
 [feature_flags]
 experimental_features = false
+
+[providers]
+# Only mock providers are permitted in Paper Trading environment (AIOS-603 section 6).
+# Live providers require explicit ADR approval and are not implemented in Phase 7.
+# Each provider entry specifies: type, enabled, and optional options.
+
+[[providers.providers]]
+type = "mock_market"
+enabled = true
+
+[[providers.providers]]
+type = "mock_shariah"
+enabled = true
+
+[[providers.providers]]
+type = "mock_fundamental"
+enabled = true

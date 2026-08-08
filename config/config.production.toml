@@ -25,3 +25,8 @@ file_backup_count = 5
 
 [feature_flags]
 experimental_features = false
+
+[providers]
+# Production environment: no providers configured by default.
+# Live providers require explicit ADR approval and separate configuration.
+# Phase 7 does not implement live providers.

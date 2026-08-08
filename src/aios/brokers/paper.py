@@ -343,6 +343,32 @@ class PaperBroker:
             return None
         return matches[-1].close
 
+    # -- state restoration ----------------------------------------------------
+
+    def restore_account(self, account: BrokerAccount) -> None:
+        """Restore the broker's cash state from a persisted account.
+
+        Used when the Core Engine restarts in the Paper environment to
+        resume from the saved account balance (AIOS-407 section 4.3).
+        """
+        if account.broker_id != self._broker_id:
+            raise BrokerValidationError(
+                f"Account broker_id {account.broker_id!r} does not match "
+                f"broker {self._broker_id!r}"
+            )
+        if account.account_id != self._account_id:
+            raise BrokerValidationError(
+                f"Account account_id {account.account_id!r} does not match "
+                f"broker account {self._account_id!r}"
+            )
+        self._cash = account.cash
+        self._initial_cash = account.initial_cash
+        self._logger.info(
+            "Restored paper broker account: cash=%.2f, initial_cash=%.2f",
+            self._cash,
+            self._initial_cash,
+        )
+
     # -- internals ----------------------------------------------------------
 
     def _get_order(self, order_id: str) -> PaperOrder:

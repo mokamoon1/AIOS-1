@@ -21,3 +21,7 @@ destination = "console"
 
 [feature_flags]
 experimental_features = true
+
+[providers]
+# Development environment: no providers configured by default.
+# Add mock providers for local development if needed.

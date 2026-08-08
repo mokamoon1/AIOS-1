@@ -122,9 +122,16 @@ def load_settings(
     app_section = dict(raw.get("app", {}))
     database_values = dict(raw.get("database", {}))
     logging_values = dict(raw.get("logging", {}))
+    providers_values = {"providers": raw.get("providers", {}).get("providers", [])}
 
     database_values.update(_env_overrides("AIOS_DATABASE_", exclude={"url"}))
     logging_values.update(_env_overrides("AIOS_LOGGING_"))
+
+    # Import ProvidersConfig at runtime to avoid circular imports
+    from aios.providers.registry import ProvidersConfig
+
+    # Rebuild AppSettings model to resolve forward reference to ProvidersConfig
+    AppSettings.model_rebuild()
 
     return AppSettings(
         app_name=os.environ.get("AIOS_APP_NAME") or str(app_section.get("name", "aios")),
@@ -132,6 +139,7 @@ def load_settings(
         debug=_env_bool("AIOS_DEBUG", bool(app_section.get("debug", False))),
         database=DatabaseSettings(**database_values),
         logging=LoggingSettings(**logging_values),
+        providers=ProvidersConfig(**providers_values),
     )
 
 

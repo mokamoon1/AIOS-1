@@ -14,9 +14,13 @@ ADR-0009:
 from __future__ import annotations
 
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from aios.providers.registry import ProvidersConfig
 
 _LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
@@ -139,3 +143,4 @@ class AppSettings(BaseSettings):
     debug: bool = False
     database: DatabaseSettings = DatabaseSettings()
     logging: LoggingSettings = LoggingSettings()
+    providers: "ProvidersConfig" = "ProvidersConfig()"

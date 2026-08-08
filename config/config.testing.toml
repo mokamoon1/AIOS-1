@@ -21,3 +21,19 @@ destination = "console"
 
 [feature_flags]
 experimental_features = true
+
+[providers]
+# Mock providers enabled for testing (AIOS-603 section 6).
+# Testing environment allows mock providers for unit/integration tests.
+
+[[providers.providers]]
+type = "mock_market"
+enabled = true
+
+[[providers.providers]]
+type = "mock_shariah"
+enabled = true
+
+[[providers.providers]]
+type = "mock_fundamental"
+enabled = true
