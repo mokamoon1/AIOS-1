@@ -1,0 +1,96 @@
+[project]
+name = "aios"
+version = "0.1.0"
+description = "AI Operating System - Core Platform (Phase 1)"
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "Proprietary" }
+authors = [{ name = "AIOS Project" }]
+
+# ADR-0008: pydantic-settings for application configuration.
+dependencies = [
+    "pydantic>=2.5,<3",
+    "pydantic-settings>=2.1,<3",
+    # ADR-0001/ADR-0006: PostgreSQL + SQLAlchemy; Alembic for schema migrations.
+    "sqlalchemy>=2.0,<3",
+    "alembic>=1.13,<2",
+    # PostgreSQL driver (approved: psycopg v3) for SQLAlchemy connections.
+    "psycopg[binary]>=3.1,<4",
+    # ADR-0009: TOML runtime configuration; tomli backport required on Python 3.10.
+    "tomli>=2.0,<3; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.4",
+    "pyright>=1.1",
+    "pre-commit>=3.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aios"]
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.4",
+    "pyright>=1.1",
+    "pre-commit>=3.6",
+    "pytest-asyncio>=1.4.0",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src"]
+exclude = ["tests/reports", "AI_BRAIN", "docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+pythonVersion = "3.10"
+pythonPlatform = "All"
+include = ["src"]
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
+markers = [
+    "unit: unit tests",
+    "integration: integration tests",
+    "database: database tests (PostgreSQL-compatible)",
+    "events: event bus tests",
+    "security: security tests",
+    "performance: performance tests",
+    "regression: regression tests",
+    "system: system tests",
+]
+
+[tool.coverage.run]
+source = ["src/aios"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# ADR-0011 section 5.4: initial coverage baseline, revisable only via a documented decision.
+fail_under = 70

@@ -1,0 +1,27 @@
+# AIOS runtime configuration - Paper Trading environment.
+# ADR-0009: TOML only, no secrets. Secrets are provided exclusively via environment variables.
+# AIOS_ENVIRONMENT must be set to one of: development, testing, paper, production.
+# ADR-0010: Paper Trading uses JSON structured logging, same as Production.
+
+[app]
+name = "aios"
+environment = "paper"
+debug = false
+
+[database]
+host = "localhost"
+port = 5432
+name = "aios_paper"
+user = "aios"
+# password: provide via AIOS_DATABASE_PASSWORD environment variable.
+
+[logging]
+level = "INFO"
+format = "json"
+destination = "file"
+file_path = "logs/aios.log"
+file_max_bytes = 10485760
+file_backup_count = 5
+
+[feature_flags]
+experimental_features = false

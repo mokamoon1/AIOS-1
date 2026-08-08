@@ -441,6 +441,7 @@ The Reference Index is considered successful when:
 |---|---|
 | 1.0.0 | Initial release of Reference Index |
 | 1.0.1 | Aligned documentation structure and relationship maps with ADR-0003 approved structure |
+| 1.0.2 | Clarified Phase 1 core agent roster authority: within Phase 1, AIOS-604 (confirmed by AIOS-401 and AIOS-403) is the canonical source for the seven-agent roster (CIO, Shariah, Market, Technical, Fundamental, Risk, Portfolio). Broader agent examples in AIOS-101 and AIOS-102 (for example the News Intelligence Agent and the combined market/technical agent) are future expansion and do not change the Phase 1 core roster. |
 
 ---
 

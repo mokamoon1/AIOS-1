@@ -1,0 +1,23 @@
+# AIOS runtime configuration - Testing environment.
+# ADR-0009: TOML only, no secrets. Secrets are provided exclusively via environment variables.
+# AIOS_ENVIRONMENT must be set to one of: development, testing, paper, production.
+
+[app]
+name = "aios"
+environment = "testing"
+debug = false
+
+[database]
+host = "localhost"
+port = 5432
+name = "aios_testing"
+user = "aios"
+# password: provide via AIOS_DATABASE_PASSWORD environment variable.
+
+[logging]
+level = "INFO"
+format = "human"
+destination = "console"
+
+[feature_flags]
+experimental_features = true

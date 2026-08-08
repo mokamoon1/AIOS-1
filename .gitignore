@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+wheels/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# uv
+.uv/
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+*.crt
+secrets/
+
+# Test artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+junit/
+tests/reports/*
+!tests/reports/.gitkeep
+
+# Coverage / tooling caches
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.pyre/
+
+# Model artifacts
+models/
+*.pkl
+*.joblib
+*.onnx
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.safetensors
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
