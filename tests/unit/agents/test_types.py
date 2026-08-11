@@ -1,12 +1,12 @@
-"""Tests for agent types, the Phase 1 core roster, and lifecycle states
-(AIOS-401, AIOS-403, AIOS-604)."""
+"""Tests for agent types, the Phase 1 core roster + Phase 9.1 News, and lifecycle states
+(AIOS-401, AIOS-403, AIOS-604, Phase 9.1)."""
 
 from __future__ import annotations
 
 from aios.agents.types import AgentState, AgentType
 
 
-def test_core_roster_has_exactly_seven_agents() -> None:
+def test_core_roster_has_exactly_eight_agents() -> None:
     expected = {
         AgentType.CIO,
         AgentType.SHARIAH,
@@ -15,6 +15,7 @@ def test_core_roster_has_exactly_seven_agents() -> None:
         AgentType.FUNDAMENTAL,
         AgentType.RISK,
         AgentType.PORTFOLIO,
+        AgentType.NEWS,
     }
     assert set(AgentType) == expected
 
@@ -23,7 +24,7 @@ def test_technical_agent_is_independent() -> None:
     assert AgentType.TECHNICAL is not AgentType.MARKET
 
 
-def test_no_news_agent_in_core_roster() -> None:
+def test_news_agent_in_roster() -> None:
     assert {agent.value for agent in AgentType} == {
         "cio",
         "shariah",
@@ -32,6 +33,7 @@ def test_no_news_agent_in_core_roster() -> None:
         "fundamental",
         "risk",
         "portfolio",
+        "news",
     }
 
 

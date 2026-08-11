@@ -14,12 +14,14 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from enum import Enum
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import (
     JSON,
     DateTime,
     Float,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -31,7 +33,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from aios.analysis.models import AnalysisResult
+if TYPE_CHECKING:
+    from aios.analysis.models import AnalysisResult
+    from aios.analysis.news import NewsArticle, SentimentEvaluation, SentimentLabel
 from aios.brokers.models import (
     BrokerAccount,
     BrokerPosition,
@@ -331,6 +335,7 @@ class AnalysisResultModel(Base):
 
     def to_domain(self) -> AnalysisResult:
         """Return the AIOS analysis result domain model (AIOS-402)."""
+        from aios.analysis.models import AnalysisResult
         return AnalysisResult(
             symbol=self.symbol,
             analysis_type=self.analysis_type,
@@ -690,6 +695,103 @@ class BrokerAccountModel(Base):
         )
 
 
+def to_domain(self) -> Event:
+        """Return the AIOS event domain model (AIOS-103)."""
+        return Event(
+            event_id=self.event_id,
+            timestamp=_utc(self.timestamp),
+            source=self.source,
+            event_type=self.event_type,
+            payload=dict(self.payload),
+            priority=EventPriority(self.priority),
+            status=EventStatus(self.status),
+        )
+
+
+class NewsArticleModel(Base):
+    """News article record (Phase 9.1).
+
+    Stores standardized news articles from providers. Historical records
+    are immutable: rows are appended and never overwritten.
+    """
+
+    __tablename__ = "news_articles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    article_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(128), nullable=False)
+    headline: Mapped[str] = mapped_column(String(512), nullable=False)
+    summary: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    symbols: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "article_id", name="uq_news_articles_provider_article_id"
+        ),
+        Index("ix_news_articles_symbols", "symbols"),
+        Index("ix_news_articles_published_at", "published_at"),
+    )
+
+    def to_domain(self) -> NewsArticle:
+        """Return the AIOS news article domain model."""
+        return NewsArticle(
+            provider=self.provider,
+            article_id=self.article_id,
+            published_at=_utc(self.published_at),
+            retrieved_at=_utc(self.retrieved_at),
+            source=self.source,
+            headline=self.headline,
+            summary=self.summary,
+            url=self.url,
+            symbols=self.symbols,
+        )
+
+
+class NewsSentimentModel(Base):
+    """News sentiment evaluation record (Phase 9.1).
+
+    Stores sentiment evaluations for news articles. Historical records
+    are immutable: rows are appended and never overwritten.
+    """
+
+    __tablename__ = "news_sentiments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    article_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    sentiment: Mapped[str] = mapped_column(String(16), nullable=False)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    methodology: Mapped[str] = mapped_column(String(128), nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    __table_args__ = (
+        Index("ix_news_sentiments_article_id", "article_id"),
+        Index("ix_news_sentiments_evaluated_at", "evaluated_at"),
+    )
+
+    def to_domain(self) -> SentimentEvaluation:
+        """Return the AIOS sentiment evaluation domain model."""
+        from aios.analysis.news import SentimentLabel
+        return SentimentEvaluation(
+            provider=self.provider,
+            article_id=self.article_id,
+            sentiment=SentimentLabel(self.sentiment),
+            score=self.score,
+            methodology=self.methodology,
+            evaluated_at=_utc(self.evaluated_at),
+        )
+
+
 class EventLogModel(Base):
     """Event log storage (ADR-0005 section 5.5, ADR-0006 section 5.6).
 
@@ -740,3 +842,54 @@ class EventLogModel(Base):
             priority=EventPriority(self.priority),
             status=EventStatus(self.status),
         )
+
+
+# =============================================================================
+# Backtest Models (Phase 9.5)
+# =============================================================================
+
+class BacktestRunModel(Base):
+    """Persistent backtest run record."""
+
+    __tablename__ = "backtest_runs"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    config: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    __table_args__ = (
+        Index("ix_backtest_runs_started_at", "started_at"),
+        Index("ix_backtest_runs_status", "status"),
+    )
+
+
+class BacktestEquityPointModel(Base):
+    """Equity curve point for a backtest run."""
+
+    __tablename__ = "backtest_equity_points"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("backtest_runs.id"), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    equity: Mapped[float] = mapped_column(Float, nullable=False)
+    cash: Mapped[float] = mapped_column(Float, nullable=False)
+    market_value: Mapped[float] = mapped_column(Float, nullable=False)
+    daily_return: Mapped[float] = mapped_column(Float, nullable=False)
+    cumulative_return: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "timestamp", name="uq_backtest_equity_run_timestamp"),
+        Index("ix_backtest_equity_points_run_timestamp", "run_id", "timestamp"),
+    )

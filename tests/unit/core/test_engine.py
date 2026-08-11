@@ -48,7 +48,7 @@ async def test_status_reports_components() -> None:
     assert status["components"]["configuration"] is True
     assert status["components"]["database"] is True
     assert status["components"]["event_bus"] is True
-    assert status["components"]["agents"] == {"loaded": 7, "ready": 7}
+    assert status["components"]["agents"] == {"loaded": 8, "ready": 8}
     assert status["components"]["engines"] == {"loaded": 6, "ready": 6}
     await core.shutdown()
 

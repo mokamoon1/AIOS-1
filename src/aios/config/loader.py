@@ -19,9 +19,25 @@ from typing import Any, Protocol, runtime_checkable
 from aios.config.errors import ConfigError
 from aios.config.settings import (
     AppSettings,
+    BacktestSettings,
+    BenchmarkSettings,
     DatabaseSettings,
+    DecisionSettings,
     Environment,
     LoggingSettings,
+    MonteCarloSettings,
+    MonitoringSettings,
+    OutOfSampleSettings,
+    PortfolioAllocationSettings,
+    RobustnessSettings,
+    SensitivitySettings,
+    SignalSettings,
+    StatisticalValidationSettings,
+    StrategyClassificationSettings,
+    StrategyEvaluationSettings,
+    StrategyScoringSettings,
+    TradingSettings,
+    WalkForwardSettings,
 )
 
 if sys.version_info >= (3, 11):
@@ -122,10 +138,42 @@ def load_settings(
     app_section = dict(raw.get("app", {}))
     database_values = dict(raw.get("database", {}))
     logging_values = dict(raw.get("logging", {}))
+    signal_values = dict(raw.get("signal", {}))
+    decision_values = dict(raw.get("decision", {}))
+    portfolio_values = dict(raw.get("portfolio", {}))
+    backtest_values = dict(raw.get("backtest", {}))
+    strategy_evaluation_values = dict(raw.get("strategy_evaluation", {}))
+    benchmark_values = dict(raw.get("benchmark", {}))
+    walk_forward_values = dict(raw.get("walk_forward", {}))
+    oos_values = dict(raw.get("oos", {}))
+    sensitivity_values = dict(raw.get("sensitivity", {}))
+    robustness_values = dict(raw.get("robustness", {}))
+    monte_carlo_values = dict(raw.get("monte_carlo", {}))
+    statistical_validation_values = dict(raw.get("statistical_validation", {}))
+    strategy_scoring_values = dict(raw.get("strategy_scoring", {}))
+    strategy_classification_values = dict(raw.get("strategy_classification", {}))
+    monitoring_values = dict(raw.get("monitoring", {}))
+    trading_values = dict(raw.get("trading", {}))
     providers_values = {"providers": raw.get("providers", {}).get("providers", [])}
 
     database_values.update(_env_overrides("AIOS_DATABASE_", exclude={"url"}))
     logging_values.update(_env_overrides("AIOS_LOGGING_"))
+    signal_values.update(_env_overrides("AIOS_SIGNAL_"))
+    decision_values.update(_env_overrides("AIOS_DECISION_"))
+    portfolio_values.update(_env_overrides("AIOS_PORTFOLIO_"))
+    backtest_values.update(_env_overrides("AIOS_BACKTEST_"))
+    strategy_evaluation_values.update(_env_overrides("AIOS_STRATEGY_EVAL_"))
+    benchmark_values.update(_env_overrides("AIOS_BENCHMARK_"))
+    walk_forward_values.update(_env_overrides("AIOS_WALK_FORWARD_"))
+    oos_values.update(_env_overrides("AIOS_OOS_"))
+    sensitivity_values.update(_env_overrides("AIOS_SENSITIVITY_"))
+    robustness_values.update(_env_overrides("AIOS_ROBUSTNESS_"))
+    monte_carlo_values.update(_env_overrides("AIOS_MONTE_CARLO_"))
+    statistical_validation_values.update(_env_overrides("AIOS_STAT_VALIDATION_"))
+    strategy_scoring_values.update(_env_overrides("AIOS_STRATEGY_SCORING_"))
+    strategy_classification_values.update(_env_overrides("AIOS_STRATEGY_CLASSIFICATION_"))
+    monitoring_values.update(_env_overrides("AIOS_MONITORING_"))
+    trading_values.update(_env_overrides("AIOS_TRADING_"))
 
     # Import ProvidersConfig at runtime to avoid circular imports
     from aios.providers.registry import ProvidersConfig
@@ -140,6 +188,22 @@ def load_settings(
         database=DatabaseSettings(**database_values),
         logging=LoggingSettings(**logging_values),
         providers=ProvidersConfig(**providers_values),
+        signal=SignalSettings(**signal_values),
+        decision=DecisionSettings(**decision_values),
+        portfolio=PortfolioAllocationSettings(**portfolio_values),
+        backtest=BacktestSettings(**backtest_values),
+        strategy_evaluation=StrategyEvaluationSettings(**strategy_evaluation_values),
+        benchmark=BenchmarkSettings(**benchmark_values),
+        walk_forward=WalkForwardSettings(**walk_forward_values),
+        oos=OutOfSampleSettings(**oos_values),
+        sensitivity=SensitivitySettings(**sensitivity_values),
+        robustness=RobustnessSettings(**robustness_values),
+        monte_carlo=MonteCarloSettings(**monte_carlo_values),
+        statistical_validation=StatisticalValidationSettings(**statistical_validation_values),
+        strategy_scoring=StrategyScoringSettings(**strategy_scoring_values),
+        strategy_classification=StrategyClassificationSettings(**strategy_classification_values),
+        monitoring=MonitoringSettings(**monitoring_values),
+        trading=TradingSettings(**trading_values),
     )
 
 

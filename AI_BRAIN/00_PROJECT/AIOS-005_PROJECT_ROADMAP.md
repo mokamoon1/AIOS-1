@@ -37,37 +37,57 @@ AIOS development follows these principles:
 AIOS development is divided into the following phases:
     
     Phase 0
-Engineering Foundation
+    Engineering Foundation
 
     ↓
 
-Phase 1
-Core Platform
+    Phase 1
+    Core Platform
 
     ↓
 
-Phase 2
-Data Infrastructure
+    Phase 2
+    Data Infrastructure
 
     ↓
 
-Phase 3
-Investment Intelligence
+    Phase 3
+    Investment Intelligence
 
     ↓
 
-Phase 4
-Portfolio Management
+    Phase 4
+    Portfolio Management
 
     ↓
 
-Phase 5
-Paper Trading
+    Phase 5
+    Paper Trading
 
     ↓
 
-Phase 6
-Production Readiness
+    Phase 6
+    Production Readiness
+
+    ↓
+
+    Phase 7
+    Data Ingestion Pipeline
+
+    ↓
+
+    Phase 8
+    Provider & Adapter Infrastructure
+
+    ↓
+
+    Phase 9
+    V1 Completion & Intelligence Maturation
+
+    ↓
+
+    Phase 10
+    Advanced Production Hardening
 
 
 ---

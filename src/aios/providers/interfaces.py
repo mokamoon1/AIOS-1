@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
+from aios.analysis.news import NewsArticle, SentimentEvaluation
 from aios.data.models import (
     Candle,
     CompanyFundamentals,
@@ -72,4 +73,35 @@ class FundamentalDataProvider(DataProvider, Protocol):
 
     async def get_fundamentals(self, symbol: str) -> CompanyFundamentals:
         """Return the standardized company fundamentals (AIOS-502 section 6)."""
+        ...
+
+
+@runtime_checkable
+class NewsDataProvider(DataProvider, Protocol):
+    """News data provider returning AIOS standard news articles.
+
+    News data providers collect and standardize news articles from external
+    sources. The provider validates the external response before returning it;
+    invalid responses are rejected (AIOS-607 section 11).
+    """
+
+    async def get_news(
+        self,
+        symbols: list[str],
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 100,
+    ) -> list[NewsArticle]:
+        """Return standardized news articles for the requested symbols.
+
+        The provider validates the external response before returning it.
+        """
+        ...
+
+    async def get_sentiment(self, article: NewsArticle) -> SentimentEvaluation:
+        """Return sentiment evaluation for a news article.
+
+        The provider validates the external response before returning it.
+        """
         ...

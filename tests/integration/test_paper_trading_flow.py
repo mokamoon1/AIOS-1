@@ -68,6 +68,11 @@ def _approved_buy_decision() -> InvestmentDecision:
     )
 
 
+def _market_open_clock() -> datetime:
+    """Deterministic 'now' inside US market hours (2026-08-06 10:00 EDT)."""
+    return datetime(2026, 8, 6, 14, 0, tzinfo=_UTC)
+
+
 async def _boot_core(monkeypatch: pytest.MonkeyPatch, environment: Environment) -> CoreEngine:
     """Boot a Core Engine against in-memory SQLite without file logging."""
     monkeypatch.setattr(core_module, "create_db_engine", lambda url, **kwargs: _sqlite_engine())
@@ -75,7 +80,7 @@ async def _boot_core(monkeypatch: pytest.MonkeyPatch, environment: Environment) 
     monkeypatch.setattr(
         core_module, "setup_audit_handler", lambda logger: logging.getLogger("aios.audit")
     )
-    core = CoreEngine(environment=environment)
+    core = CoreEngine(environment=environment, clock=_market_open_clock)
     await core.start()
     return core
 

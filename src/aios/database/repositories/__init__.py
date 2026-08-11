@@ -6,11 +6,13 @@ Concrete SQLAlchemy-backed repositories implement the Repository protocol
 """
 
 from aios.database.repositories.analysis import AnalysisRepository
+from aios.database.repositories.backtest import BacktestRepository
 from aios.database.repositories.broker_account import BrokerAccountRepository
 from aios.database.repositories.company import CompanyRepository
 from aios.database.repositories.decision import DecisionRepository
 from aios.database.repositories.event_log import EventLogRepository
 from aios.database.repositories.market import MarketRepository
+from aios.database.repositories.news import NewsRepository
 from aios.database.repositories.paper_fill import PaperFillRepository
 from aios.database.repositories.paper_order import PaperOrderRepository
 from aios.database.repositories.paper_position import PaperPositionRepository
@@ -19,11 +21,13 @@ from aios.database.repositories.shariah import ShariahRepository
 
 __all__ = [
     "AnalysisRepository",
+    "BacktestRepository",
     "BrokerAccountRepository",
     "CompanyRepository",
     "DecisionRepository",
     "EventLogRepository",
     "MarketRepository",
+    "NewsRepository",
     "PaperFillRepository",
     "PaperOrderRepository",
     "PaperPositionRepository",

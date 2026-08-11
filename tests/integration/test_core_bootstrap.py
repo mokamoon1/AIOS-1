@@ -206,7 +206,7 @@ async def test_health_and_readiness_reporting(monkeypatch: pytest.MonkeyPatch) -
     assert status["state"] == "ready"
     for component in ("configuration", "logging", "database", "event_bus"):
         assert status["components"][component] is True
-    assert status["components"]["agents"] == {"loaded": 7, "ready": 7}
+    assert status["components"]["agents"] == {"loaded": 8, "ready": 8}
     assert status["components"]["engines"] == {"loaded": 6, "ready": 6}
     await core.shutdown()
 

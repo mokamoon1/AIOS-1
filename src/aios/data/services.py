@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Protocol
 
+from aios.analysis.news import NewsArticle, SentimentEvaluation
 from aios.brokers.models import (
     BrokerAccount,
     BrokerPosition,
@@ -106,6 +107,29 @@ class DecisionDataRepository(Protocol):
     def get_latest_decision(self, symbol: str) -> InvestmentDecision: ...
 
 
+class NewsDataRepository(Protocol):
+    """Read/write interface implemented by the Database Layer news repository.
+
+    News articles and sentiment evaluations are stored and retrieved through
+    this facade (Phase 9.1).
+    """
+
+    def get_articles(
+        self,
+        symbol: str | None = None,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 100,
+    ) -> list[NewsArticle]: ...
+
+    def get_sentiment(self, article_id: str) -> SentimentEvaluation | None: ...
+
+    def get_sentiment_history(
+        self, article_id: str, *, since: datetime | None = None
+    ) -> list[SentimentEvaluation]: ...
+
+
 class PaperOrderDataRepository(Protocol):
     """Read/write interface implemented by the Database Layer paper order repository.
 
@@ -162,6 +186,7 @@ class DataService:
         market_repository: MarketDataRepository | None = None,
         shariah_repository: ShariahDataRepository | None = None,
         fundamental_repository: FundamentalDataRepository | None = None,
+        news_repository: NewsDataRepository | None = None,
         portfolio_repository: PortfolioDataRepository | None = None,
         decision_repository: DecisionDataRepository | None = None,
         paper_order_repository: PaperOrderDataRepository | None = None,
@@ -174,6 +199,7 @@ class DataService:
         self._market = market_repository
         self._shariah = shariah_repository
         self._fundamental = fundamental_repository
+        self._news = news_repository
         self._portfolio = portfolio_repository
         self._decision = decision_repository
         self._paper_order = paper_order_repository
@@ -251,6 +277,40 @@ class DataService:
         if self._fundamental is None:
             raise DataNotFoundError("No fundamental repository configured")
         return self._fundamental.get_fundamentals(symbol=symbol, report_date=report_date)
+
+    # -- news data queries --------------------------------------------------
+
+    def get_articles(
+        self,
+        symbol: str | None = None,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 100,
+    ) -> list[NewsArticle]:
+        """Return news articles, optionally filtered by symbol and date range."""
+        if self._news is None:
+            raise DataNotFoundError("No news repository configured")
+        return self._news.get_articles(
+            symbol=symbol,
+            start=start,
+            end=end,
+            limit=limit,
+        )
+
+    def get_sentiment(self, article_id: str) -> SentimentEvaluation | None:
+        """Return the latest sentiment evaluation for an article."""
+        if self._news is None:
+            raise DataNotFoundError("No news repository configured")
+        return self._news.get_sentiment(article_id)
+
+    def get_sentiment_history(
+        self, article_id: str, *, since: datetime | None = None
+    ) -> list[SentimentEvaluation]:
+        """Return the sentiment history for an article."""
+        if self._news is None:
+            raise DataNotFoundError("No news repository configured")
+        return self._news.get_sentiment_history(article_id, since=since)
 
     # -- portfolio data queries ---------------------------------------------
 

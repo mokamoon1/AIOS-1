@@ -8,11 +8,12 @@ analyzed_at) prevents duplicate storage of the same run.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import select
 
-from aios.analysis.models import AnalysisResult
+if TYPE_CHECKING:
+    from aios.analysis.models import AnalysisResult
 from aios.data.models import Timeframe
 from aios.database.engine import session_scope
 from aios.database.exceptions import RecordNotFoundError
@@ -20,7 +21,7 @@ from aios.database.models import AnalysisResultModel
 from aios.database.repositories.base import BaseRepository
 
 
-def _result_key(result: AnalysisResult) -> tuple[str, str, Timeframe, datetime]:
+def _result_key(result: "AnalysisResult") -> tuple[str, str, Timeframe, datetime]:
     """Return a dialect-independent unique key for an analysis result.
 
     SQLite stores naive datetimes while the domain model is UTC-aware, so

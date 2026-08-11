@@ -154,6 +154,42 @@ class TestConfigPrecedence:
         assert "s3cret" in settings.database.database_url
 
 
+class TestSignalConfiguration:
+    @pytest.mark.parametrize(
+        "environment",
+        [
+            Environment.DEVELOPMENT,
+            Environment.TESTING,
+            Environment.PAPER,
+            Environment.PRODUCTION,
+        ],
+    )
+    def test_signal_section_loads_from_toml(self, monkeypatch, environment) -> None:
+        monkeypatch.setenv("AIOS_ENVIRONMENT", environment.value)
+        settings = load_settings()
+        assert settings.signal.technical_weight == pytest.approx(0.70)
+        assert settings.signal.news_weight == pytest.approx(0.30)
+        assert settings.signal.buy_threshold == pytest.approx(0.65)
+        assert settings.signal.sell_threshold == pytest.approx(0.35)
+        assert settings.signal.min_confidence == pytest.approx(0.50)
+        assert settings.signal.min_news_items == 1
+        assert settings.signal.require_news is True
+
+    def test_signal_env_overrides_toml(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AIOS_ENVIRONMENT", "development")
+        monkeypatch.setenv("AIOS_SIGNAL_BUY_THRESHOLD", "0.8")
+        monkeypatch.setenv("AIOS_SIGNAL_REQUIRE_NEWS", "false")
+        settings = load_settings()
+        assert settings.signal.buy_threshold == pytest.approx(0.8)
+        assert settings.signal.require_news is False
+
+    def test_signal_toml_overrides_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AIOS_ENVIRONMENT", "development")
+        monkeypatch.delenv("AIOS_SIGNAL_TECHNICAL_WEIGHT", raising=False)
+        settings = load_settings()
+        assert settings.signal.technical_weight == pytest.approx(0.70)
+
+
 class TestConfigFilesContainNoSecrets:
     @pytest.mark.parametrize(
         "environment",

@@ -7,6 +7,9 @@ AIOS-205: market structure (sections 5-7), Fibonacci levels (section 8), and
 indicator values (section 10), plus the configurable weighted scoring
 framework required by AIOS-305 section 7.
 
+News Intelligence models (Phase 9.1) provide structured news analysis outputs
+including relevance, sentiment, confidence, evidence, and explanations.
+
 These models carry no persistence concerns; analysis history storage lives in
 the Database Layer (AIOS-606).
 """
@@ -228,3 +231,144 @@ class AnalysisResult(BaseModel):
         if not value.strip():
             raise ValueError("value must not be empty")
         return value.strip()
+
+
+# =============================================================================
+# News Intelligence Models (Phase 9.1)
+# =============================================================================
+
+class Evidence(BaseModel):
+    """Evidence supporting a news intelligence assessment (Phase 9.1).
+
+    Captures the source facts and signals used in the assessment.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source: str = Field(description="Source of the evidence (e.g., article headline, specific sentence)")
+    article_id: str = Field(description="ID of the source article")
+    facts: list[str] = Field(default_factory=list, description="Specific facts or signals used in the assessment")
+
+
+class Explanation(BaseModel):
+    """Explanation for a news intelligence assessment (Phase 9.1).
+
+    Provides human-readable explanation of the assessment methodology and factors.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    summary: str = Field(description="Brief summary of the assessment")
+    factors: list[str] = Field(default_factory=list, description="Key factors considered in the assessment")
+    methodology: str = Field(description="Description of the methodology used")
+
+
+class RelevanceAssessment(BaseModel):
+    """Relevance assessment with score, evidence, and explanation (Phase 9.1).
+
+    Measures how relevant a news article is to a specific symbol or market.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    score: float = Field(ge=0.0, le=1.0, description="Relevance score from 0.0 to 1.0")
+    rationale: str = Field(description="Human-readable rationale for the relevance score")
+    evidence: list[str] = Field(default_factory=list, description="Supporting evidence for the relevance assessment")
+    explanation: Explanation
+
+
+class SentimentAssessment(BaseModel):
+    """Sentiment assessment with full evidence and explanation (Phase 9.1).
+
+    Extends the basic SentimentEvaluation with confidence, evidence, and explanation.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    label: str = Field(description="Sentiment label: BULLISH, BEARISH, or NEUTRAL")
+    score: float = Field(ge=-1.0, le=1.0, description="Sentiment score from -1.0 (bearish) to 1.0 (bullish)")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in the sentiment assessment")
+    methodology: str = Field(description="Methodology used for sentiment assessment")
+    evidence: list[Evidence] = Field(default_factory=list)
+    explanation: Explanation
+    evaluated_at: datetime = Field(default_factory=_utc_now, description="Timestamp when the sentiment was evaluated")
+
+
+class ConfidenceScore(BaseModel):
+    """Confidence score with rationale (Phase 9.1).
+
+    Represents the overall confidence in the news intelligence assessment.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    score: float = Field(ge=0.0, le=1.0, description="Overall confidence score from 0.0 to 1.0")
+    rationale: str = Field(description="Rationale for the confidence score")
+    factors: list[str] = Field(default_factory=list, description="Factors contributing to the confidence score")
+
+
+class NewsIntelligenceOutput(BaseModel):
+    """Structured News Intelligence Output for consumption by Signal Engine (Phase 9.1).
+
+    This is the primary output of the News Intelligence Engine, containing
+    all assessment components in a structured format suitable for consumption
+    by the Signal Engine and other downstream consumers.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    article_id: str = Field(description="ID of the analyzed news article")
+    symbol: str = Field(description="Symbol the article relates to")
+    provider: str = Field(description="News provider identifier")
+    published_at: datetime = Field(description="Publication timestamp of the article")
+    relevance: RelevanceAssessment
+    sentiment: SentimentAssessment
+    confidence: ConfidenceScore
+    evidence: list[Evidence] = Field(default_factory=list)
+    explanation: Explanation
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# =============================================================================
+# Signal Models (Phase 9.2)
+# =============================================================================
+
+class SignalDirection(str, Enum):
+    """Documented Signal Engine direction (AIOS-605 section 10).
+
+    The Signal Engine combines technical outputs and news intelligence into
+    one directional output: BUY, SELL, HOLD, or WAIT (AIOS-605 section 10).
+    WAIT reports conflicting, incomplete, or low-confidence data so the
+    engine never invents a directional opinion from weak evidence (AIOS-605
+    section 15, AIOS-208 section 10).
+    """
+
+    BUY = "buy"
+    SELL = "sell"
+    HOLD = "hold"
+    WAIT = "wait"
+
+
+class SignalResult(BaseModel):
+    """Structured Signal Engine output (AIOS-605 section 10, Phase 9.2).
+
+    ``score`` is the single bullish-bias value in the closed interval
+    [0.0, 1.0] combining the technical and news components with configurable
+    weights (AIOS-305 section 7). ``confidence`` measures data completeness
+    and component agreement. ``evidence`` and ``explanation`` keep the
+    direction fully explainable (AIOS-305 section 10).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    symbol: str
+    direction: SignalDirection
+    score: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    components: list[ScoreComponent] = Field(default_factory=list)
+    technical_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    news_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    news_items: int = Field(default=0, ge=0)
+    evidence: list[Evidence] = Field(default_factory=list)
+    explanation: Explanation
+    reasons: list[str] = Field(default_factory=list)

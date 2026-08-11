@@ -48,15 +48,16 @@ class CompanyRepository(BaseRepository[CompanyFundamentalModel]):
     def get_fundamentals(
         self, symbol: str, *, report_date: date | None = None
     ) -> CompanyFundamentals:
-        """Return the latest fundamentals for ``symbol``.
+        """Return the latest fundamentals for ``symbol`` as of ``report_date``.
 
-        Without ``report_date`` the most recent report is returned. Raises
-        :class:`RecordNotFoundError` when no report exists.
+        Without ``report_date`` the most recent report is returned.
+        With ``report_date``, the latest report on or before that date is returned.
+        Raises :class:`RecordNotFoundError` when no report exists.
         """
         statement = select(CompanyFundamentalModel).where(CompanyFundamentalModel.symbol == symbol)
         if report_date is not None:
-            statement = statement.where(CompanyFundamentalModel.report_date == report_date)
+            statement = statement.where(CompanyFundamentalModel.report_date <= report_date)
         row = self._first(statement.order_by(CompanyFundamentalModel.report_date.desc()))
         if row is None:
-            raise RecordNotFoundError(f"No fundamentals for {symbol!r}")
+            raise RecordNotFoundError(f"No fundamentals for {symbol!r} as of {report_date}")
         return cast(CompanyFundamentalModel, row).to_domain()

@@ -18,11 +18,13 @@ from aios.providers.base import DataProvider
 from aios.providers.interfaces import (
     FundamentalDataProvider,
     MarketDataProvider,
+    NewsDataProvider,
     ShariahDataProvider,
 )
 from aios.providers.mock import (
     MockFundamentalDataProvider,
     MockMarketDataProvider,
+    MockNewsDataProvider,
     MockShariahDataProvider,
 )
 from aios.providers.registry import ProviderConfig, ProviderType, ProvidersConfig
@@ -89,6 +91,8 @@ class ProviderFactory:
                 return self._create_mock_shariah(config)
             elif config.type is ProviderType.MOCK_FUNDAMENTAL:
                 return self._create_mock_fundamental(config)
+            elif config.type is ProviderType.MOCK_NEWS:
+                return self._create_mock_news(config)
             else:
                 raise ProviderFactoryError(
                     f"Unknown provider type: {config.type.value!r}. "
@@ -140,3 +144,7 @@ class ProviderFactory:
         """Create a MockFundamentalDataProvider with required dependencies."""
         company_repository = CompanyRepository(self._session_factory)
         return MockFundamentalDataProvider(company_repository)
+
+    def _create_mock_news(self, config: ProviderConfig) -> MockNewsDataProvider:
+        """Create a MockNewsDataProvider with required dependencies."""
+        return MockNewsDataProvider()

@@ -25,6 +25,7 @@ class ProviderType(str, Enum):
     MOCK_MARKET = "mock_market"
     MOCK_SHARIAH = "mock_shariah"
     MOCK_FUNDAMENTAL = "mock_fundamental"
+    MOCK_NEWS = "mock_news"
 
     @classmethod
     def mock_types(cls) -> set["ProviderType"]:
@@ -33,6 +34,7 @@ class ProviderType(str, Enum):
             cls.MOCK_MARKET,
             cls.MOCK_SHARIAH,
             cls.MOCK_FUNDAMENTAL,
+            cls.MOCK_NEWS,
         }
 
     @classmethod

@@ -24,6 +24,7 @@ from typing import Protocol
 
 from aios.agents.permissions import Permission, Role, require_permission
 from aios.brokers.exceptions import BrokerValidationError
+from aios.brokers.guards import GuardChain
 from aios.brokers.interface import BrokerInterface
 from aios.brokers.models import (
     BrokerAccount,
@@ -34,9 +35,19 @@ from aios.brokers.models import (
     PaperOrder,
     PortfolioStatus,
 )
+from aios.brokers.retry import RetryPolicy
 from aios.data.models import DecisionAction, InvestmentDecision
 from aios.database.exceptions import RecordNotFoundError
 from aios.errors import DatabaseError, DataError
+from aios.monitoring.event_log import (
+    EVENT_BROKER_CONNECTED,
+    EVENT_BROKER_DISCONNECTED,
+    EVENT_ERROR,
+    EVENT_GATE_FAILURE,
+    EVENT_OPERATION,
+    EVENT_SHARIAH_VIOLATION,
+    EventLog,
+)
 
 _REQUIRED_APPROVALS = (
     "shariah_approval",
@@ -44,6 +55,8 @@ _REQUIRED_APPROVALS = (
     "analysis_completion",
     "risk_approval",
 )
+
+_SHARIAH_APPROVAL_KEY = "shariah_approval"
 
 
 class BrokerDataStore(Protocol):
@@ -117,11 +130,22 @@ class BrokerService:
         broker: SimulationBroker,
         *,
         store: BrokerDataStore | None = None,
+        guards: GuardChain | None = None,
+        retry_policy: RetryPolicy | None = None,
+        event_log: EventLog | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._broker = broker
         self._store = store
+        self._guards = guards or GuardChain()
+        self._retry = retry_policy or RetryPolicy()
+        self._event_log = event_log or EventLog()
         self._logger = logger or logging.getLogger("aios.brokers.service")
+
+    @property
+    def guards(self) -> GuardChain:
+        """Return the execution guard chain (kill switch + market session)."""
+        return self._guards
 
     @property
     def broker(self) -> BrokerInterface:
@@ -159,9 +183,17 @@ class BrokerService:
         The returned order is in the PENDING state; no auto-fill occurs.
         """
         require_permission(role, Permission.SUBMIT_PAPER_ORDERS)
+        self._guards.assert_allows(order, operation="order submission")
         self._validate_decision(order, decision)
         order = self._order_with_decision_ref(order, decision)
-        submitted = self._broker.submit_order(order)
+        self._record_operation("submit_paper_order", order)
+        try:
+            result = self._retry.run(lambda: self._broker.submit_order(order))
+        except Exception as exc:
+            self._record_broker_failure(order, "submit", exc)
+            raise
+        submitted = result.value
+        self._record_broker_connected(order)
         self._persist_order(submitted)
         return submitted
 
@@ -174,21 +206,48 @@ class BrokerService:
         affected order, positions, and account are persisted.
         """
         require_permission(role, Permission.SUBMIT_PAPER_ORDERS)
-        filled, fill = self._broker.fill_order(order_id, price=price)
+        order = self._broker.get_order(order_id)
+        self._guards.assert_allows(order, operation="order fill")
+        self._record_operation("fill_order", order)
+        try:
+            result = self._retry.run(lambda: self._broker.fill_order(order_id, price=price))
+        except Exception as exc:
+            self._record_broker_failure(order, "fill", exc)
+            raise
+        filled, fill = result.value
+        self._record_broker_connected(order)
         self._persist_fill(filled, fill)
         return filled, fill
 
     def cancel_order(self, order_id: str, *, role: Role) -> PaperOrder:
         """Cancel a PENDING paper order (PENDING -> CANCELLED, AIOS-1103)."""
         require_permission(role, Permission.SUBMIT_PAPER_ORDERS)
-        cancelled = self._broker.cancel_order(order_id)
+        order = self._broker.get_order(order_id)
+        self._guards.assert_allows(order, operation="order cancellation")
+        self._record_operation("cancel_order", order)
+        try:
+            result = self._retry.run(lambda: self._broker.cancel_order(order_id))
+        except Exception as exc:
+            self._record_broker_failure(order, "cancel", exc)
+            raise
+        cancelled = result.value
+        self._record_broker_connected(order)
         self._persist_order(cancelled)
         return cancelled
 
     def reject_order(self, order_id: str, *, reason: str, role: Role) -> PaperOrder:
         """Reject a PENDING paper order (PENDING -> REJECTED, AIOS-1103)."""
         require_permission(role, Permission.SUBMIT_PAPER_ORDERS)
-        rejected = self._broker.reject_order(order_id, reason=reason)
+        order = self._broker.get_order(order_id)
+        self._guards.assert_allows(order, operation="order rejection")
+        self._record_operation("reject_order", order)
+        try:
+            result = self._retry.run(lambda: self._broker.reject_order(order_id, reason=reason))
+        except Exception as exc:
+            self._record_broker_failure(order, "reject", exc)
+            raise
+        rejected = result.value
+        self._record_broker_connected(order)
         self._persist_order(rejected)
         return rejected
 
@@ -247,6 +306,26 @@ class BrokerService:
             )
         for key in _REQUIRED_APPROVALS:
             if validation.get(key) is not True:
+                if key == _SHARIAH_APPROVAL_KEY:
+                    self._event_log.record(
+                        EVENT_SHARIAH_VIOLATION,
+                        "broker.service",
+                        payload={
+                            "symbol": order.symbol,
+                            "order_id": order.order_id,
+                            "gate": key,
+                        },
+                    )
+                else:
+                    self._event_log.record(
+                        EVENT_GATE_FAILURE,
+                        "broker.service",
+                        payload={
+                            "symbol": order.symbol,
+                            "order_id": order.order_id,
+                            "gate": key,
+                        },
+                    )
                 raise BrokerValidationError(
                     f"Decision is missing approval {key!r}; paper order blocked "
                     "(AIOS-208 section 9)"
@@ -294,3 +373,46 @@ class BrokerService:
             self._store.store_broker_account(self._broker.check_account())
         except (DataError, DatabaseError) as exc:
             self._logger.warning("Could not persist paper fill %s: %s", fill.fill_id, exc)
+
+    # -- operational event recording (Phase 9.6) ------------------------------
+
+    def _record_operation(self, operation: str, order: PaperOrder) -> None:
+        """Record an OPERATION event (denominator of the alert error rate)."""
+        self._event_log.record(
+            EVENT_OPERATION,
+            "broker.service",
+            payload={"operation": operation, "symbol": order.symbol, "order_id": order.order_id},
+        )
+
+    def _record_broker_connected(self, order: PaperOrder) -> None:
+        """Record a successful broker interaction (broker reachable)."""
+        self._event_log.record(
+            EVENT_BROKER_CONNECTED,
+            "broker.service",
+            payload={"symbol": order.symbol, "order_id": order.order_id},
+        )
+
+    def _record_broker_failure(self, order: PaperOrder, operation: str, exc: Exception) -> None:
+        """Record a broker failure and a disconnect when the error is transient."""
+        is_transient = self._retry.is_transient(exc)
+        self._event_log.record(
+            EVENT_ERROR,
+            "broker.service",
+            payload={
+                "operation": operation,
+                "symbol": order.symbol,
+                "order_id": order.order_id,
+                "error_type": type(exc).__name__,
+                "transient": is_transient,
+            },
+        )
+        if is_transient:
+            self._event_log.record(
+                EVENT_BROKER_DISCONNECTED,
+                "broker.service",
+                payload={
+                    "source": "broker.service",
+                    "reason": f"{type(exc).__name__}: {exc}",
+                    "operation": operation,
+                },
+            )

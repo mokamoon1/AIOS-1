@@ -44,3 +44,39 @@ class InvalidOrderStateError(BrokerError):
     CANCELLED, and PENDING -> REJECTED (AIOS-1103 section 11); every other
     transition is rejected.
     """
+
+
+class TradeBlockedError(BrokerError):
+    """Raised when a trade guard blocks order submission or execution.
+
+    Raised by the emergency stop / kill switch (``code="emergency_stop"``)
+    and by the market-session guard (``code="market_closed"``). The reason
+    is always surfaced so operators can react without guessing.
+    """
+
+    def __init__(self, message: str, *, code: str = "blocked", reason: str = "") -> None:
+        super().__init__(message)
+        self.code = code
+        self.reason = reason or message
+
+
+class BrokerTransientError(BrokerError):
+    """Raised when a broker operation fails transiently.
+
+    Transient failures (connection drops, timeouts) are eligible for the
+    bounded retry policy. Validation, security, and gate failures are never
+    raised as transient.
+    """
+
+
+class BrokerRetryExhaustedError(BrokerError):
+    """Raised when a broker operation exhausts the retry budget.
+
+    Carries the number of attempts made and the last underlying error so the
+    final failure is never silently converted into a fabricated success.
+    """
+
+    def __init__(self, message: str, *, attempts: int, last_error: Exception) -> None:
+        super().__init__(message)
+        self.attempts = attempts
+        self.last_error = last_error

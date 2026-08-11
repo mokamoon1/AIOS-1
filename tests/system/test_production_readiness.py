@@ -71,6 +71,11 @@ def _sqlite_engine():
     return engine
 
 
+def _market_open_clock() -> datetime:
+    """Deterministic 'now' inside US market hours (2026-08-06 10:00 EDT)."""
+    return datetime(2026, 8, 6, 14, 0, tzinfo=timezone.utc)
+
+
 async def _boot_core(monkeypatch: pytest.MonkeyPatch, environment: Environment) -> CoreEngine:
     """Boot a Core Engine against in-memory SQLite without file logging."""
     monkeypatch.setattr(core_module, "create_db_engine", lambda url, **kwargs: _sqlite_engine())
@@ -78,7 +83,7 @@ async def _boot_core(monkeypatch: pytest.MonkeyPatch, environment: Environment) 
     monkeypatch.setattr(
         core_module, "setup_audit_handler", lambda logger: logging.getLogger("aios.audit")
     )
-    core = CoreEngine(environment=environment)
+    core = CoreEngine(environment=environment, clock=_market_open_clock)
     await core.start()
     return core
 
@@ -218,12 +223,12 @@ class TestHealthSnapshotOverBootedCore:
             assert snapshot.service_available is True
             assert snapshot.data_available is True
             assert snapshot.broker_connected is False
-            assert snapshot.agent_loaded == 7
-            assert snapshot.agent_ready == 7
+            assert snapshot.agent_loaded == 8
+            assert snapshot.agent_ready == 8
             assert snapshot.engine_loaded == 6
             assert snapshot.engine_ready == 6
-            # Phase 7: TESTING environment has 3 mock providers
-            assert snapshot.providers_connected == 3
+            # Phase 7: TESTING environment has 4 mock providers (including News)
+            assert snapshot.providers_connected == 4
         finally:
             await core.shutdown()
 

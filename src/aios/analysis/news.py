@@ -31,11 +31,10 @@ def _utc_now() -> datetime:
 class SentimentLabel(str, Enum):
     """Sentiment label assigned by AIOS (AIOS-102 section 9).
 
-    AIOS itself assigns only ``NEUTRAL``: bullish/bearish polarity and scoring
-    are not documented and remain future expansion (AIOS-303 section 14,
-    AIOS-502 section 15).
+    AIOS assigns sentiment labels based on rule-based evaluation.
     """
-
+    BULLISH = "bullish"
+    BEARISH = "bearish"
     NEUTRAL = "neutral"
 
 
@@ -78,9 +77,8 @@ class NewsArticle(BaseModel):
 class SentimentEvaluation(BaseModel):
     """Sentiment evaluation for a news article (AIOS-102 section 9).
 
-    AIOS computes no sentiment score; the default evaluation is ``NEUTRAL``.
-    A provider-supplied label and score are preserved as uninterpreted values
-    with provenance so nothing is fabricated (AIOS-502 section 12).
+    AIOS computes sentiment score using rule-based evaluation methodology.
+    The evaluation includes sentiment label, confidence score, and evidence.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

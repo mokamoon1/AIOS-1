@@ -255,9 +255,19 @@ class Context:
         self.results: list[dict[str, Any]] = []
 
 
+def _market_open_clock() -> datetime:
+    """Deterministic 'now' inside US market hours (2026-08-06 10:00 EDT).
+
+    The market-session guard (Phase 9.6, P0-5) reads the clock it is given;
+    booting the validation harness with a fixed market-open time keeps the
+    14 operational checks independent of the wall-clock time of day.
+    """
+    return datetime(2026, 8, 6, 14, 0, tzinfo=timezone.utc)
+
+
 async def boot_core() -> CoreEngine:
     """Boot a live Core Engine in the Paper environment (real config/logging/DB)."""
-    core = CoreEngine(environment=Environment.PAPER)
+    core = CoreEngine(environment=Environment.PAPER, clock=_market_open_clock)
     await core.start()
     return core
 
@@ -298,7 +308,7 @@ async def test_01_startup(ctx: Context) -> list[str]:
     assert core.broker_service.broker_id == "paper"
     agents = core.agent_manager.list_agents()
     engines = core.engine_manager.list_engines()
-    assert len(agents) == 7, f"expected 7 agents, got {len(agents)}"
+    assert len(agents) == 8, f"expected 8 agents, got {len(agents)}"
     assert len(engines) == 6, f"expected 6 engines, got {len(engines)}"
     assert core.status()["state"] == "ready"
     assert AIOS_LOG.is_file(), "Paper environment must write a JSON log file"
@@ -323,11 +333,11 @@ async def test_02_health(ctx: Context) -> list[str]:
     assert snapshot.service_available is True
     assert snapshot.data_available is True
     assert snapshot.broker_connected is True
-    # Phase 7: Provider Module activated - 3 mock providers expected in PAPER/TESTING
-    assert snapshot.providers_connected == 3, (
-        f"expected 3 connected mock providers, got {snapshot.providers_connected}"
+    # Phase 7: Provider Module activated - 4 mock providers expected in PAPER/TESTING (including News)
+    assert snapshot.providers_connected == 4, (
+        f"expected 4 connected mock providers, got {snapshot.providers_connected}"
     )
-    assert snapshot.agent_loaded == 7 and snapshot.agent_ready == 7
+    assert snapshot.agent_loaded == 8 and snapshot.agent_ready == 8
     assert snapshot.engine_loaded == 6 and snapshot.engine_ready == 6
     return [
         f"service_available={snapshot.service_available}",
@@ -430,16 +440,17 @@ async def test_05_analysis(ctx: Context) -> list[str]:
     )
     results = await core.engine_manager.run_pipeline(list(EngineType), pipeline_input)
     decision = results[EngineType.DECISION]
-    assert decision.output["decision"] == "wait", (
-        f"expected WAIT (gates pass, scoring not configured), got {decision.output['decision']}"
+    # Decision Engine now produces directional decision (BUY/SELL/HOLD) when all gates pass
+    assert decision.output["decision"] in {"buy", "sell", "hold"}, (
+        f"expected directional decision, got {decision.output['decision']}"
     )
     assert decision.output["validation"]["status"] == "VALID"
     assert decision.output["persisted"] is True
     stored = DecisionRepository(core.session_factory).get_latest_decision("MSFT")
-    assert stored.decision is DecisionAction.WAIT
+    assert stored.decision in {DecisionAction.BUY, DecisionAction.SELL, DecisionAction.HOLD}
     return [
         "Market, Technical, Fundamental engines produced objective outputs",
-        "Decision pipeline: gates VALID -> WAIT, persisted to the decision log",
+        "Decision pipeline: gates VALID -> directional decision, persisted to the decision log",
     ]
 
 
@@ -897,9 +908,10 @@ async def test_14_end_to_end(ctx: Context) -> list[str]:
     )
     decision_output = pipeline[EngineType.DECISION].output
     assert decision_output["validation"]["status"] == "VALID"
-    assert decision_output["decision"] == "wait"
+    # Decision Engine now produces directional decision (BUY/SELL/HOLD) when all gates pass
+    assert decision_output["decision"] in {"buy", "sell", "hold"}
     stored_decision = DecisionRepository(session_factory).get_latest_decision("NVDA")
-    assert stored_decision.decision is DecisionAction.WAIT
+    assert stored_decision.decision in {DecisionAction.BUY, DecisionAction.SELL, DecisionAction.HOLD}
 
     # Downstream approval produces an actionable BUY decision.
     approved = approved_decision(
@@ -956,7 +968,7 @@ async def test_14_end_to_end(ctx: Context) -> list[str]:
     assert health.service_available is True, "service must remain available"
 
     return [
-        "NVDA: analysis pipeline -> VALID WAIT persisted in the decision log",
+        "NVDA: analysis pipeline -> VALID directional decision persisted in the decision log",
         "Approved BUY routed -> PENDING -> explicit FILLED (never auto-filled)",
         "Portfolio, performance, health, and persistence all consistent after the flow",
     ]

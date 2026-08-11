@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -282,3 +282,195 @@ class InvestmentDecision(BaseModel):
         if not value.strip():
             raise ValueError("symbol must not be empty")
         return value.strip()
+
+
+# =============================================================================
+# Corporate Actions Models (Phase 9.3+)
+# =============================================================================
+
+
+class CorporateActionType(str, Enum):
+    """Types of corporate actions affecting securities."""
+
+    SPLIT = "split"
+    REVERSE_SPLIT = "reverse_split"
+    DIVIDEND = "dividend"
+    SPINOFF = "spinoff"
+    MERGER = "merger"
+    ACQUISITION = "acquisition"
+    TICKER_CHANGE = "ticker_change"
+    DELISTING = "delisting"
+    BANKRUPTCY = "bankruptcy"
+
+
+class CorporateAction(BaseModel):
+    """Corporate action affecting a security (Phase 9.3+).
+
+    Represents corporate events that affect price, quantity, or identity
+    of a security. Used for historical price/fundamental adjustment in backtesting.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    symbol: str
+    action_type: CorporateActionType
+    effective_date: date
+    ratio: float | None = Field(default=None, description="For splits: new/old ratio. For dividends: amount per share")
+    old_ticker: str | None = None
+    new_ticker: str | None = None
+    cash_amount: float | None = Field(default=None, description="Cash dividend amount per share")
+    description: str = ""
+    announced_at: datetime | None = None
+    recorded_at: datetime = Field(default_factory=_utc_now)
+
+    @field_validator("symbol")
+    @classmethod
+    def symbol_must_not_be_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("symbol must not be empty")
+        return value.strip()
+
+
+class CorporateActionProvider(Protocol):
+    """Interface for retrieving corporate actions (Phase 9.3+).
+
+    Implementations provide corporate action data for backtesting
+    to adjust prices, quantities, and fundamentals for corporate events.
+    """
+
+    def get_actions(
+        self,
+        symbol: str,
+        *,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> list[CorporateAction]:
+        """Get corporate actions for a symbol within a date range."""
+        ...
+
+    def get_actions_for_symbols(
+        self,
+        symbols: list[str],
+        *,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> dict[str, list[CorporateAction]]:
+        """Get corporate actions for multiple symbols."""
+        ...
+
+
+# =============================================================================
+# Survivorship Bias Handling (Phase 9.3+)
+# =============================================================================
+
+
+class SecurityLifecycleStatus(str, Enum):
+    """Lifecycle status of a security for survivorship bias handling."""
+
+    ACTIVE = "active"
+    DELISTED = "delisted"
+    ACQUIRED = "acquired"
+    BANKRUPT = "bankrupt"
+    MERGED = "merged"
+    TICKER_CHANGED = "ticker_changed"
+
+
+class SecurityLifecycle(BaseModel):
+    """Security lifecycle tracking for survivorship bias handling (Phase 9.3+).
+
+    Tracks the lifecycle events of a security to enable proper
+    survivorship bias handling in backtesting.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    symbol: str
+    exchange: str
+    status: SecurityLifecycleStatus
+    listed_date: date | None = None
+    delisted_date: date | None = None
+    delisting_reason: str | None = None
+    successor_symbol: str | None = None
+    successor_exchange: str | None = None
+    corporate_actions: list[CorporateAction] = Field(default_factory=list)
+
+    @field_validator("symbol", "exchange")
+    @classmethod
+    def must_not_be_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("value must not be empty")
+        return value.strip()
+
+
+class HistoricalUniverseProvider(Protocol):
+    """Interface for retrieving historical universe including delisted securities (Phase 9.3+).
+
+    Enables survivorship-bias-free backtesting by providing access to
+    the complete historical universe including delisted/acquired securities.
+    """
+
+    def get_universe_as_of(self, as_of: date) -> list[str]:
+        """Get all symbols that were tradeable as of the given date."""
+        ...
+
+    def get_symbol_lifecycle(self, symbol: str) -> SecurityLifecycle | None:
+        """Get the lifecycle record for a symbol."""
+        ...
+
+    def get_corporate_action_provider(self) -> CorporateActionProvider:
+        """Get the corporate action provider for this universe."""
+        ...
+
+
+# =============================================================================
+# Historical Data Provider (Extended for Backtesting)
+# =============================================================================
+
+
+class PointInTimeDataProvider(Protocol):
+    """Extended data provider interface for point-in-time backtesting (Phase 9.5).
+
+    Extends the standard data provider with point-in-time query capabilities
+    and corporate action awareness.
+    """
+
+    def get_candles_point_in_time(
+        self,
+        symbol: str,
+        timeframe: Timeframe,
+        *,
+        as_of: datetime,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 1000,
+    ) -> Sequence[Candle]:
+        """Get candles as of a specific point in time (no look-ahead)."""
+        ...
+
+    def get_fundamentals_point_in_time(
+        self,
+        symbol: str,
+        *,
+        as_of: date,
+        report_date: date | None = None,
+    ) -> CompanyFundamentals | None:
+        """Get fundamentals as of a specific date (point-in-time)."""
+        ...
+
+    def get_corporate_actions(
+        self,
+        symbol: str,
+        *,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> list[CorporateAction]:
+        """Get corporate actions affecting a symbol within a date range."""
+        ...
+
+    def get_symbol_lifecycle(self, symbol: str) -> SecurityLifecycle | None:
+        """Get the lifecycle record for a symbol."""
+        ...
+
+    def get_historical_universe(self, as_of: date) -> list[str]:
+        """Get all symbols that were tradeable as of a given date."""
+        ...

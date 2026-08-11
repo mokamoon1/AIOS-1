@@ -1,5 +1,5 @@
 """Tests for the concrete Phase 1 agent roster and CIO authority
-(AIOS-401, AIOS-403, AIOS-604, ADR-0002)."""
+(AIOS-401, AIOS-403, AIOS-604, ADR-0002, Phase 9.1 News Intelligence, Phase 9.4 Portfolio Allocation)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from aios.agents.roster import (
     CIOAgent,
     FundamentalAgent,
     MarketAgent,
+    NewsAgent,
     PortfolioAgent,
     RiskAgent,
     ShariahAgent,
@@ -21,14 +22,23 @@ from aios.agents.roster import (
     require_cio_authority,
 )
 from aios.agents.types import AgentType
+from aios.analysis.news_engine import NewsEngine
+from aios.config.settings import PortfolioAllocationSettings
 from aios.data.models import PortfolioPosition, PositionStatus
+from aios.data.pipeline import DataPipeline
+from aios.data.validation import DataValidator
 from aios.errors import DataError, SecurityError
-from aios.portfolio import PortfolioService
+from aios.portfolio import (
+    AllocationAction,
+    PortfolioAllocationResult,
+    PortfolioService,
+    TargetAllocation,
+)
 
 
-def test_roster_maps_all_seven_types() -> None:
+def test_roster_maps_all_eight_types() -> None:
     assert set(AGENT_CLASSES) == set(AgentType)
-    assert len(AGENT_CLASSES) == 7
+    assert len(AGENT_CLASSES) == 8
 
 
 def test_create_agent_returns_correct_class() -> None:
@@ -40,6 +50,7 @@ def test_create_agent_returns_correct_class() -> None:
         AgentType.FUNDAMENTAL: FundamentalAgent,
         AgentType.RISK: RiskAgent,
         AgentType.PORTFOLIO: PortfolioAgent,
+        AgentType.NEWS: NewsAgent,
     }
     for agent_type, expected in cases.items():
         assert isinstance(create_agent(agent_type), expected)
@@ -47,7 +58,7 @@ def test_create_agent_returns_correct_class() -> None:
 
 def test_create_agent_unknown_type_raises() -> None:
     with pytest.raises(KeyError):
-        create_agent("news")  # type: ignore[arg-type]
+        create_agent("invalid_type")  # type: ignore[arg-type]
 
 
 def test_each_agent_declares_metadata() -> None:
@@ -131,6 +142,7 @@ def test_create_agent_rejects_portfolio_service_for_other_types() -> None:
         AgentType.TECHNICAL,
         AgentType.FUNDAMENTAL,
         AgentType.RISK,
+        AgentType.NEWS,
     ):
         with pytest.raises(TypeError):
             create_agent(agent_type, portfolio_service=service)
@@ -144,6 +156,31 @@ async def test_portfolio_agent_without_service_uses_placeholder() -> None:
     assert result.output["rebalance_suggestion"] is None
     assert result.output["portfolio_impact"] == {}
     assert "Portfolio Service" in result.explanation
+
+
+async def test_news_agent_rejects_portfolio_service() -> None:
+    service = PortfolioService(_FakeReader([]))
+    with pytest.raises(TypeError):
+        create_agent(AgentType.NEWS, portfolio_service=service)
+
+
+async def test_news_agent_rejects_news_engine_for_other_types() -> None:
+    from aios.analysis.news_engine import NewsEngine
+    from aios.data.pipeline import DataPipeline
+    from aios.data.validation import DataValidator
+
+    news_engine = NewsEngine(DataPipeline(DataValidator()))
+    for agent_type in (
+        AgentType.CIO,
+        AgentType.SHARIAH,
+        AgentType.MARKET,
+        AgentType.TECHNICAL,
+        AgentType.FUNDAMENTAL,
+        AgentType.RISK,
+        AgentType.PORTFOLIO,
+    ):
+        with pytest.raises(TypeError):
+            create_agent(agent_type, news_engine=news_engine)
 
 
 async def test_portfolio_agent_reports_snapshot() -> None:

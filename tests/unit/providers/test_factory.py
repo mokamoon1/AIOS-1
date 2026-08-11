@@ -302,7 +302,8 @@ async def test_provider_type_mock_types() -> None:
     assert ProviderType.MOCK_MARKET in mock_types
     assert ProviderType.MOCK_SHARIAH in mock_types
     assert ProviderType.MOCK_FUNDAMENTAL in mock_types
-    assert len(mock_types) == 3
+    assert ProviderType.MOCK_NEWS in mock_types
+    assert len(mock_types) == 4
 
 
 async def test_provider_type_is_mock() -> None:

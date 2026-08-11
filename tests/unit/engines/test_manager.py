@@ -285,18 +285,24 @@ async def test_run_pipeline_feeds_prior_outputs_in_dependency_order() -> None:
     assert risk.output["approval_status"] == "approved"
     decision = results[EngineType.DECISION]
     assert decision.output["validation"]["status"] == "VALID"
-    assert decision.output["decision"] == "wait"
+    # Decision Engine now produces directional decision (BUY/SELL/HOLD) when all gates pass
+    assert decision.output["decision"] in {"buy", "sell", "hold"}
+    assert decision.output["decision_score"] is not None
     assert decision.output["persisted"] is True
     assert decision.output["risk_level"] == "acceptable"
 
 
-async def test_run_pipeline_rejects_when_risk_not_evaluated() -> None:
+async def test_run_pipeline_risk_not_evaluated_passes_gate() -> None:
+    """Risk gate only blocks on 'blocked'; 'not_evaluated' passes."""
     manager = _make_manager()
     results = await manager.run_pipeline([EngineType.DECISION], _engine_input())
     decision = results[EngineType.DECISION]
-    assert decision.output["validation"]["status"] == "REJECTED"
-    assert decision.output["decision"] == "no_trade"
-    assert decision.output["validation"]["checks"]["risk_approval"] is False
+    # Risk not_evaluated -> not blocked -> gate passes
+    # All hard constraints pass -> weighted scoring produces directional decision
+    assert decision.output["validation"]["status"] == "VALID"
+    assert decision.output["decision"] in {"buy", "sell", "hold"}
+    assert decision.output["decision_score"] is not None
+    assert decision.output["risk_level"] == "not_evaluated"
 
 
 async def test_run_pipeline_rejects_missing_risk_when_limited_set() -> None:

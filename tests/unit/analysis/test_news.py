@@ -80,8 +80,12 @@ class TestSentimentEvaluation:
         assert evaluation.score is None
         assert evaluation.methodology == "none"
 
-    def test_only_neutral_label_exists(self) -> None:
-        assert list(SentimentLabel) == [SentimentLabel.NEUTRAL]
+    def test_sentiment_labels_exist(self) -> None:
+        labels = list(SentimentLabel)
+        assert SentimentLabel.BULLISH in labels
+        assert SentimentLabel.BEARISH in labels
+        assert SentimentLabel.NEUTRAL in labels
+        assert len(labels) == 3
 
     def test_provider_score_passes_through_uninterpreted(self) -> None:
         evaluation = SentimentEvaluation(

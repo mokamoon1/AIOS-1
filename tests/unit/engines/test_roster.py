@@ -7,6 +7,14 @@ from datetime import date, datetime, timezone
 import pytest
 
 from aios.analysis.exceptions import InsufficientDataError
+from aios.analysis.models import (
+    ConfidenceScore,
+    Explanation,
+    NewsIntelligenceOutput,
+    RelevanceAssessment,
+    SentimentAssessment,
+)
+from aios.config.settings import SignalSettings
 from aios.data.models import (
     AssetType,
     Candle,
@@ -143,6 +151,61 @@ def _engine_input() -> EngineInput:
 
 async def _analyze(engine, engine_input: EngineInput) -> EngineOutput:
     data = await engine._load_data(engine_input)
+    return await engine._analyze(engine_input, data)
+
+
+def _news_intel(sentiment_score: float, *, relevance: float = 0.8) -> dict:
+    intel = NewsIntelligenceOutput(
+        article_id="a1",
+        symbol="AAPL",
+        provider="mock_news",
+        published_at=datetime(2026, 1, 1, 13, 30, tzinfo=timezone.utc),
+        relevance=RelevanceAssessment(
+            score=relevance,
+            rationale=f"Relevance {relevance}",
+            evidence=["AAPL in symbols"],
+            explanation=Explanation(
+                summary="relevant", factors=["AAPL"], methodology="test"
+            ),
+        ),
+        sentiment=SentimentAssessment(
+            label=(
+                "BULLISH"
+                if sentiment_score > 0
+                else "BEARISH" if sentiment_score < 0 else "NEUTRAL"
+            ),
+            score=sentiment_score,
+            confidence=0.9,
+            methodology="test",
+            evidence=[],
+            explanation=Explanation(
+                summary="sentiment", factors=[], methodology="test"
+            ),
+        ),
+        confidence=ConfidenceScore(score=0.9, rationale="test", factors=["test"]),
+        evidence=[],
+        explanation=Explanation(
+            summary="intel", factors=[], methodology="test"
+        ),
+    )
+    return intel.model_dump(mode="json")
+
+
+def _technical_output(direction: str, strength: float) -> dict:
+    return {"structure": {"direction": direction, "strength": strength}}
+
+
+def _signal_engine_input(*, technical: dict | None = None) -> EngineInput:
+    payload: dict = {"symbol": "AAPL"}
+    if technical is not None:
+        payload["engine_outputs"] = {"technical": {"output": technical}}
+    return EngineInput(request_id="req-signal", payload=payload)
+
+
+async def _signal_analyze(
+    engine: SignalEngine, engine_input: EngineInput, news: list | None = None
+) -> EngineOutput:
+    data = {"news_intelligence": news or []}
     return await engine._analyze(engine_input, data)
 
 
@@ -410,40 +473,69 @@ async def test_decision_engine_rejects_missing_analysis() -> None:
     engine = _decision_engine()
     result = await _analyze_decision(engine, {"risk": {"approval_status": "approved"}})
     output = result.output
-    assert output["decision"] == "no_trade"
-    assert output["validation"]["status"] == "REJECTED"
+    # Missing analysis -> WAIT (data/analysis gate)
+    assert output["decision"] == "wait"
+    assert output["validation"]["status"] == "CONSTRAINT_TRIGGERED"
     assert output["validation"]["checks"]["analysis_completion"] is False
     assert "market" in output["validation"]["missing_analysis"]
     assert "technical" in output["validation"]["missing_analysis"]
     assert "fundamental" in output["validation"]["missing_analysis"]
     assert output["persisted"] is True
+    assert "data_analysis" in output["hard_constraints_triggered"]
 
 
-async def test_decision_engine_rejects_missing_risk_approval() -> None:
+async def test_decision_engine_missing_risk_approval_gate_passes() -> None:
+    """Risk gate only blocks on 'blocked' status; missing/None passes."""
     engine = _decision_engine()
     result = await _analyze_decision(engine, _prior_outputs(risk_status=None))
     output = result.output
-    assert output["decision"] == "no_trade"
-    assert output["validation"]["status"] == "REJECTED"
-    assert output["validation"]["checks"]["risk_approval"] is False
+    # Risk missing -> risk_output=None -> not blocked -> gate passes
+    # All hard constraints pass -> weighted scoring
+    # component scores: market=0.8, fundamental=None (no derived_ratios), signal=None
+    # weighted = 0.8 * 0.2 = 0.16 -> HOLD (between -0.65 and 0.65)
+    assert output["decision"] == "hold"
+    assert output["validation"]["status"] == "VALID"
+    assert output["decision_score"] is not None
     assert output["risk_level"] is None
-    assert "risk_approval" in output["validation"]["checks"]
+    assert output["persisted"] is True
 
 
-async def test_decision_engine_rejects_unapproved_risk() -> None:
+async def test_decision_engine_unapproved_risk_not_blocked() -> None:
+    """Risk gate only blocks on 'blocked'; 'not_evaluated' passes."""
     engine = _decision_engine()
     result = await _analyze_decision(engine, _prior_outputs(risk_status="not_evaluated"))
     output = result.output
-    assert output["decision"] == "no_trade"
-    assert output["validation"]["status"] == "REJECTED"
+    # Risk not_evaluated -> not blocked -> gate passes
+    # All hard constraints pass -> weighted scoring -> HOLD
+    assert output["decision"] == "hold"
+    assert output["validation"]["status"] == "VALID"
+    assert output["decision_score"] is not None
     assert output["risk_level"] == "not_evaluated"
+    assert output["persisted"] is True
 
 
-async def test_decision_engine_issues_wait_when_validated() -> None:
+async def test_decision_engine_blocked_risk_issues_no_trade() -> None:
+    """Risk gate blocks only when approval_status == 'blocked'."""
+    engine = _decision_engine()
+    result = await _analyze_decision(engine, _prior_outputs(risk_status="blocked"))
+    output = result.output
+    # Risk blocked -> NO_TRADE (hard constraint)
+    assert output["decision"] == "no_trade"
+    assert output["validation"]["status"] == "CONSTRAINT_TRIGGERED"
+    assert output["risk_level"] == "rejected"
+    assert "risk" in output["hard_constraints_triggered"]
+    assert output["persisted"] is True
+
+
+async def test_decision_engine_issues_directional_decision_when_validated() -> None:
+    """When all gates pass, Decision Engine produces BUY/SELL/HOLD based on score."""
     engine = _decision_engine()
     result = await _analyze_decision(engine, _prior_outputs())
     output = result.output
-    assert output["decision"] == "wait"
+    # All hard constraints pass -> weighted scoring
+    # component scores: market=0.8, fundamental=None, signal=None
+    # weighted = 0.8 * 0.2 = 0.16 -> HOLD
+    assert output["decision"] == "hold"
     assert output["validation"]["status"] == "VALID"
     assert output["validation"]["checks"] == {
         "shariah_approval": True,
@@ -451,11 +543,10 @@ async def test_decision_engine_issues_wait_when_validated() -> None:
         "analysis_completion": True,
         "risk_approval": True,
     }
-    assert output["confidence"] == 1.0
+    assert output["decision_score"] is not None
     assert output["risk_level"] == "acceptable"
-    assert output["decision_score"] is None
     assert output["persisted"] is True
-    assert "not yet defined" in output["reason"]
+    assert "not yet defined" not in output["reason"]
 
 
 async def test_decision_engine_persists_decision_record() -> None:
@@ -466,10 +557,12 @@ async def test_decision_engine_persists_decision_record() -> None:
     assert len(data_access._stored_decisions) == 1
     record = data_access._stored_decisions[0]
     assert record.symbol == "AAPL"
-    assert record.decision.value == "wait"
+    assert record.decision.value == "hold"  # Now produces HOLD, not WAIT
     assert record.risk_score == 0.4
     assert "validation" in record.supporting_data
     assert "engine_outputs" in record.supporting_data
+    assert "component_scores" in record.supporting_data
+    assert "confidence_components" in record.supporting_data
 
 
 async def test_decision_engine_degrades_when_store_fails() -> None:
@@ -480,7 +573,7 @@ async def test_decision_engine_degrades_when_store_fails() -> None:
     engine.initialize()
     result = await _analyze_decision(engine, _prior_outputs())
     assert result.output["persisted"] is False
-    assert result.output["decision"] == "wait"
+    assert result.output["decision"] == "hold"  # Now produces HOLD
 
 
 async def test_decision_engine_ignores_unknown_prior_outputs() -> None:
@@ -501,6 +594,161 @@ async def test_signal_engine_scaffold_output() -> None:
     engine.initialize()
     result = await _analyze(engine, _engine_input())
     assert "signal" in result.explanation.lower()
+
+
+async def test_signal_engine_buy_on_uptrend_and_bullish_news() -> None:
+    engine = SignalEngine()
+    engine.initialize()
+    result = await _signal_analyze(
+        engine,
+        _signal_engine_input(technical=_technical_output("uptrend", 1.0)),
+        news=[_news_intel(0.9, relevance=1.0)],
+    )
+    output = result.output
+    assert output["direction"] == "buy"
+    assert output["score"] >= 0.65
+    assert output["confidence"] >= 0.5
+    assert output["news_items"] == 1
+    assert output["technical_score"] is not None
+    assert output["news_score"] is not None
+    assert output["reasons"]
+    assert "signal" in result.explanation.lower()
+
+
+async def test_signal_engine_sell_on_downtrend_and_bearish_news() -> None:
+    engine = SignalEngine()
+    engine.initialize()
+    result = await _signal_analyze(
+        engine,
+        _signal_engine_input(technical=_technical_output("downtrend", 1.0)),
+        news=[_news_intel(-0.9, relevance=1.0)],
+    )
+    assert result.output["direction"] == "sell"
+    assert result.output["score"] <= 0.35
+
+
+async def test_signal_engine_hold_on_neutral_inputs() -> None:
+    engine = SignalEngine()
+    engine.initialize()
+    result = await _signal_analyze(
+        engine,
+        _signal_engine_input(technical=_technical_output("range", 0.5)),
+        news=[_news_intel(0.0, relevance=1.0)],
+    )
+    assert result.output["direction"] == "hold"
+    assert 0.35 < result.output["score"] < 0.65
+
+
+async def test_signal_engine_wait_when_technical_missing() -> None:
+    engine = SignalEngine()
+    engine.initialize()
+    result = await _signal_analyze(engine, _signal_engine_input(), news=[_news_intel(0.9)])
+    assert result.output["direction"] == "wait"
+    assert result.output["score"] == 0.0
+    assert any("technical" in reason for reason in result.output["reasons"])
+
+
+async def test_signal_engine_wait_when_news_missing() -> None:
+    engine = SignalEngine()
+    engine.initialize()
+    result = await _signal_analyze(
+        engine,
+        _signal_engine_input(technical=_technical_output("uptrend", 1.0)),
+    )
+    assert result.output["direction"] == "wait"
+    assert any("news" in reason for reason in result.output["reasons"])
+
+
+async def test_signal_engine_wait_on_conflicting_low_confidence() -> None:
+    engine = SignalEngine()
+    engine.initialize()
+    result = await _signal_analyze(
+        engine,
+        _signal_engine_input(technical=_technical_output("uptrend", 0.8)),
+        news=[_news_intel(-0.6, relevance=1.0)],
+    )
+    assert result.output["direction"] == "wait"
+    assert any("confidence" in reason for reason in result.output["reasons"])
+
+
+async def test_signal_engine_uses_configurable_thresholds() -> None:
+    settings = SignalSettings(
+        technical_weight=0.7,
+        news_weight=0.3,
+        buy_threshold=0.4,
+        sell_threshold=0.2,
+        min_confidence=0.5,
+        min_news_items=1,
+        require_news=True,
+    )
+    engine = SignalEngine(signal_settings=settings)
+    engine.initialize()
+    result = await _signal_analyze(
+        engine,
+        _signal_engine_input(technical=_technical_output("range", 0.5)),
+        news=[_news_intel(0.0, relevance=1.0)],
+    )
+    assert result.output["direction"] == "buy"
+
+
+async def test_signal_engine_respects_min_news_items() -> None:
+    settings = SignalSettings(
+        technical_weight=0.7,
+        news_weight=0.3,
+        buy_threshold=0.65,
+        sell_threshold=0.35,
+        min_confidence=0.5,
+        min_news_items=2,
+        require_news=True,
+    )
+    engine = SignalEngine(signal_settings=settings)
+    engine.initialize()
+    result = await _signal_analyze(
+        engine,
+        _signal_engine_input(technical=_technical_output("uptrend", 1.0)),
+        news=[_news_intel(0.9, relevance=1.0)],
+    )
+    assert result.output["direction"] == "wait"
+    assert any("news" in reason for reason in result.output["reasons"])
+
+
+async def test_signal_engine_technical_only_when_news_not_required() -> None:
+    settings = SignalSettings(
+        technical_weight=0.7,
+        news_weight=0.3,
+        buy_threshold=0.65,
+        sell_threshold=0.35,
+        min_confidence=0.5,
+        min_news_items=1,
+        require_news=False,
+    )
+    engine = SignalEngine(signal_settings=settings)
+    engine.initialize()
+    result = await _signal_analyze(
+        engine,
+        _signal_engine_input(technical=_technical_output("uptrend", 1.0)),
+    )
+    assert result.output["direction"] == "buy"
+    assert result.output["news_score"] is None
+    assert result.output["technical_score"] == pytest.approx(1.0)
+
+
+async def test_signal_engine_output_carries_structured_fields() -> None:
+    engine = SignalEngine()
+    engine.initialize()
+    news = [_news_intel(0.9, relevance=1.0)]
+    result = await _signal_analyze(
+        engine,
+        _signal_engine_input(technical=_technical_output("uptrend", 1.0)),
+        news=news,
+    )
+    output = result.output
+    assert output["symbol"] == "AAPL"
+    assert output["direction"] in {"buy", "sell", "hold", "wait"}
+    assert 0.0 <= output["score"] <= 1.0
+    assert 0.0 <= output["confidence"] <= 1.0
+    assert isinstance(output["reasons"], list) and output["reasons"]
+    assert output["news_intelligence"] == news
 
 
 def test_signal_engine_depends_on_technical() -> None:

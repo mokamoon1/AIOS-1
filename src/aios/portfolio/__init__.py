@@ -8,14 +8,26 @@ execute trades directly (AIOS-603 section 10).
 from __future__ import annotations
 
 from aios.portfolio.exceptions import PortfolioError
-from aios.portfolio.models import PortfolioSnapshot, PositionHolding, SectorAllocation
+from aios.portfolio.models import (
+    AllocationAction,
+    PortfolioAllocationResult,
+    PortfolioSnapshot,
+    PositionHolding,
+    RebalanceSuggestion,
+    SectorAllocation,
+    TargetAllocation,
+)
 from aios.portfolio.service import PortfolioPositionsReader, PortfolioService
 
 __all__ = [
+    "AllocationAction",
+    "PortfolioAllocationResult",
     "PortfolioError",
     "PortfolioPositionsReader",
     "PortfolioService",
     "PortfolioSnapshot",
     "PositionHolding",
+    "RebalanceSuggestion",
     "SectorAllocation",
+    "TargetAllocation",
 ]

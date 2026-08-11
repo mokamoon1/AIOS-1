@@ -33,6 +33,7 @@ from aios.data.models import (
     ShariahCompliance,
     Timeframe,
 )
+from aios.analysis.news import NewsArticle
 
 VALIDATOR_VERSION = "1.0.0"
 
@@ -338,6 +339,109 @@ class DataValidator:
             except PydanticValidationError as exc:
                 structural.extend(_classify_pydantic_errors(exc))
         return self._report(dataset_id, structural, [], started)
+
+    def validate_news(
+        self, dataset_id: str, data: Sequence[Mapping | NewsArticle]
+    ) -> ValidationReport:
+        """Validate a news dataset (Phase 9.1).
+
+        Validates news articles for required fields, timestamp validity,
+        and structural integrity.
+        """
+        started = time.perf_counter()
+        structural: list[ValidationIssue] = []
+        articles: list[NewsArticle] = []
+        for item in data:
+            if isinstance(item, NewsArticle):
+                articles.append(item)
+                continue
+            try:
+                articles.append(NewsArticle.model_validate(item))
+            except PydanticValidationError as exc:
+                structural.extend(_classify_pydantic_errors(exc))
+        for article in articles:
+            structural.extend(self._news_business_rules_for(article))
+        quality = self._news_quality_issues(articles, dataset_id)
+        return self._report(dataset_id, structural, quality, started)
+
+    def _news_business_rules_for(self, article: NewsArticle) -> list[ValidationIssue]:
+        """Enforce news article business rules (Phase 9.1)."""
+        issues: list[ValidationIssue] = []
+        if article.published_at > datetime.now(timezone.utc):
+            issues.append(
+                ValidationIssue(
+                    ValidationErrorCode.TIMESTAMP_ERROR,
+                    "published_at must not be in the future",
+                    field="published_at",
+                )
+            )
+        if article.retrieved_at < article.published_at:
+            issues.append(
+                ValidationIssue(
+                    ValidationErrorCode.CONSISTENCY_ERROR,
+                    "retrieved_at must not be before published_at",
+                    field="retrieved_at",
+                )
+            )
+        if not article.headline or not article.headline.strip():
+            issues.append(
+                ValidationIssue(
+                    ValidationErrorCode.MISSING_DATA,
+                    "headline must not be empty",
+                    field="headline",
+                )
+            )
+        if not article.symbols:
+            issues.append(
+                ValidationIssue(
+                    ValidationErrorCode.MISSING_DATA,
+                    "at least one symbol must be provided",
+                    field="symbols",
+                )
+            )
+        if article.summary and len(article.summary) > 5000:
+            issues.append(
+                ValidationIssue(
+                    ValidationErrorCode.INVALID_VALUE,
+                    "summary exceeds maximum length of 5000 characters",
+                    field="summary",
+                )
+            )
+        return issues
+
+    def _news_quality_issues(
+        self, articles: list[NewsArticle], dataset_id: str
+    ) -> list[ValidationIssue]:
+        issues: list[ValidationIssue] = []
+        if not articles:
+            return issues
+        # Check for duplicate articles (same provider + article_id)
+        seen: set[tuple[str, str]] = set()
+        for article in articles:
+            key = (article.provider, article.article_id)
+            if key in seen:
+                issues.append(
+                    ValidationIssue(
+                        ValidationErrorCode.DUPLICATE_RECORD,
+                        f"duplicate article {article.article_id} from provider {article.provider}",
+                        field="article_id",
+                    )
+                )
+            seen.add(key)
+        # Freshness check
+        if self._freshness_max_age is not None:
+            newest = max(article.published_at for article in articles)
+            age = datetime.now(timezone.utc) - newest
+            if age > self._freshness_max_age:
+                issues.append(
+                    ValidationIssue(
+                        ValidationErrorCode.INVALID_VALUE,
+                        f"dataset {dataset_id!r} is stale (age {age} exceeds "
+                        f"{self._freshness_max_age})",
+                        field="quality.freshness",
+                    )
+                )
+        return issues
 
     def _report(
         self,

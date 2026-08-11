@@ -20,6 +20,7 @@ class AgentType(str, Enum):
     FUNDAMENTAL = "fundamental"
     RISK = "risk"
     PORTFOLIO = "portfolio"
+    NEWS = "news"
 
 
 class AgentState(str, Enum):

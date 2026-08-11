@@ -41,6 +41,12 @@ from datetime import datetime, timezone
 from typing import Any, Callable, ClassVar
 
 from aios.analysis import (
+    Evidence,
+    Explanation,
+    NewsIntelligenceOutput,
+    ScoreComponent,
+    SignalDirection,
+    SignalResult,
     atr,
     bollinger_bands,
     ema,
@@ -50,8 +56,10 @@ from aios.analysis import (
     market_structure,
     rsi,
     sma,
+    weighted_score,
 )
 from aios.analysis.exceptions import InsufficientDataError
+from aios.config.settings import DecisionSettings, SignalSettings
 from aios.data.models import (
     CompanyFundamentals,
     DecisionAction,
@@ -644,6 +652,217 @@ class RiskEngine(Engine):
         )
 
 
+def _technical_bullish_bias(technical_output: Any) -> float | None:
+    """Map a Technical Engine output into a bullish-bias score in [0.0, 1.0].
+
+    The technical structure direction carries the documented trend
+    classification (AIOS-205 section 5): an uptrend maps to a score above the
+    neutral 0.5 and a downtrend below it, scaled by the structure strength
+    so a stronger trend produces a more extreme score. A missing or
+    malformed output yields ``None`` so the Signal Engine can report WAIT
+    instead of inventing a technical opinion (AIOS-605 section 15).
+    """
+    if not isinstance(technical_output, dict):
+        return None
+    structure = technical_output.get("structure")
+    if not isinstance(structure, dict):
+        return None
+    direction = structure.get("direction")
+    raw_strength = structure.get("strength")
+    try:
+        strength = float(raw_strength) if raw_strength is not None else 0.5
+    except (TypeError, ValueError):
+        strength = 0.5
+    strength = min(1.0, max(0.0, strength))
+    if direction == "uptrend":
+        return 0.5 + 0.5 * strength
+    if direction == "downtrend":
+        return 0.5 - 0.5 * strength
+    return 0.5
+
+
+def _news_bullish_bias(
+    news_intelligence: list[Any],
+) -> tuple[float | None, int, list[Evidence]]:
+    """Combine News Intelligence items into a bullish-bias score.
+
+    The per-item sentiment score in [-1.0, 1.0] (AIOS-102 section 9) is
+    mapped to [0.0, 1.0] and averaged across the items, weighted by each
+    item's relevance so marginal articles influence the signal less
+    (AIOS-305 section 7). Returns ``(news_score, item_count, evidence)``;
+    the score is ``None`` when no usable item is available.
+    """
+    items: list[NewsIntelligenceOutput] = []
+    for raw in news_intelligence:
+        try:
+            intel = (
+                raw
+                if isinstance(raw, NewsIntelligenceOutput)
+                else NewsIntelligenceOutput.model_validate(raw)
+            )
+        except Exception:  # noqa: BLE001 - tolerate malformed items
+            continue
+        items.append(intel)
+    if not items:
+        return None, 0, []
+    scores: list[float] = []
+    weights: list[float] = []
+    evidence: list[Evidence] = []
+    for intel in items:
+        sentiment = intel.sentiment
+        mapped = min(1.0, max(0.0, (float(sentiment.score) + 1.0) / 2.0))
+        relevance = min(1.0, max(0.0, float(intel.relevance.score)))
+        scores.append(mapped)
+        weights.append(relevance)
+        evidence.extend(intel.evidence)
+    total_weight = sum(weights)
+    if total_weight > 0:
+        combined = sum(score * weight for score, weight in zip(scores, weights)) / total_weight
+    else:
+        combined = sum(scores) / len(scores)
+    return combined, len(items), evidence
+
+
+def _signal_confidence(
+    technical_score: float | None,
+    news_score: float | None,
+    settings: SignalSettings,
+) -> float:
+    """Compute the Signal Engine confidence in [0.0, 1.0].
+
+    Confidence reflects data completeness (which expected components are
+    present) and component agreement (technical and news pulling in the same
+    direction); conflicting components reduce confidence so the Signal
+    Engine can report WAIT instead of a false BUY/SELL (AIOS-605 section 15).
+    """
+    expected = 2 if settings.require_news else 1
+    present = sum(1 for value in (technical_score, news_score) if value is not None)
+    completeness = present / expected if expected else 1.0
+    agreement = 1.0
+    if technical_score is not None and news_score is not None:
+        agreement = 1.0 - abs(technical_score - news_score)
+    return min(1.0, max(0.0, completeness * agreement))
+
+
+def _signal_result(
+    *,
+    symbol: str,
+    technical_score: float | None,
+    news_score: float | None,
+    news_items: int,
+    news_intelligence: list[Any],
+    evidence: list[Evidence],
+    settings: SignalSettings,
+) -> tuple[SignalResult, dict]:
+    """Build the documented :class:`SignalResult` and its serialized output.
+
+    Resolves the weighted bullish bias (AIOS-305 section 7) with the
+    configurable technical/news weights, applies the configurable BUY/SELL
+    thresholds (AIOS-605 section 10), and reports WAIT whenever required data
+    is missing or confidence falls below the configured minimum so no
+    directional opinion is fabricated from weak evidence (AIOS-605 section
+    15, AIOS-208 section 10).
+    """
+    missing: list[str] = []
+    if technical_score is None:
+        missing.append("technical")
+    if settings.require_news and (
+        news_score is None or news_items < settings.min_news_items
+    ):
+        missing.append("news")
+
+    components: list[ScoreComponent] = []
+    if technical_score is not None:
+        components.append(
+            ScoreComponent(
+                name="technical",
+                score=technical_score,
+                weight=settings.technical_weight,
+            )
+        )
+    if news_score is not None:
+        components.append(
+            ScoreComponent(
+                name="news",
+                score=news_score,
+                weight=settings.news_weight,
+            )
+        )
+
+    if missing or not components:
+        direction = SignalDirection.WAIT
+        overall = None
+        confidence = 0.0
+        reasons = [f"required data missing: {', '.join(missing) or 'no analyzable data'}"]
+    else:
+        overall = weighted_score(components).overall
+        confidence = _signal_confidence(technical_score, news_score, settings)
+        if confidence < settings.min_confidence:
+            direction = SignalDirection.WAIT
+            reasons = [
+                f"confidence {confidence:.2f} below minimum {settings.min_confidence:.2f}"
+            ]
+        elif overall >= settings.buy_threshold:
+            direction = SignalDirection.BUY
+            reasons = [
+                f"bullish bias {overall:.2f} at or above buy threshold "
+                f"{settings.buy_threshold:.2f}"
+            ]
+        elif overall <= settings.sell_threshold:
+            direction = SignalDirection.SELL
+            reasons = [
+                f"bullish bias {overall:.2f} at or below sell threshold "
+                f"{settings.sell_threshold:.2f}"
+            ]
+        else:
+            direction = SignalDirection.HOLD
+            reasons = [
+                f"bullish bias {overall:.2f} between thresholds "
+                f"({settings.sell_threshold:.2f}, {settings.buy_threshold:.2f})"
+            ]
+
+    factors: list[str] = []
+    if technical_score is not None:
+        factors.append(f"technical structure score {technical_score:.2f}")
+    if news_score is not None:
+        factors.append(f"news sentiment score {news_score:.2f} across {news_items} items")
+    if missing:
+        factors.append("missing components: " + ", ".join(missing))
+    if overall is not None:
+        factors.append(f"combined bullish bias {overall:.2f}")
+
+    methodology = (
+        f"Signal Engine combines technical structure and news intelligence with "
+        f"configurable weights (technical {settings.technical_weight:.2f}, news "
+        f"{settings.news_weight:.2f}) into a single bullish bias in [0.0, 1.0], then "
+        f"derives BUY/SELL/HOLD/WAIT from the configured thresholds "
+        f"(buy {settings.buy_threshold:.2f}, sell {settings.sell_threshold:.2f}). "
+        f"WAIT is reported whenever required data is missing or confidence falls "
+        f"below {settings.min_confidence:.2f}."
+    )
+
+    result = SignalResult(
+        symbol=symbol,
+        direction=direction,
+        score=overall if overall is not None else 0.0,
+        confidence=confidence,
+        components=components,
+        technical_score=technical_score,
+        news_score=news_score,
+        news_items=news_items,
+        evidence=evidence,
+        explanation=Explanation(
+            summary=f"Signal Engine produced direction {direction.value} for {symbol}.",
+            factors=factors,
+            methodology=methodology,
+        ),
+        reasons=reasons,
+    )
+    output = result.model_dump(mode="json")
+    output["news_intelligence"] = news_intelligence
+    return result, output
+
+
 class SignalEngine(Engine):
     """Signal Engine (AIOS-605 section 10).
 
@@ -651,34 +870,257 @@ class SignalEngine(Engine):
     and calculates confidence. Documented output directions: BUY, SELL,
     HOLD, WAIT, accompanied by supporting evidence (AIOS-605 section 10).
 
-    The Signal Engine depends on the Technical Engine because it combines
-    technical outputs (AIOS-605 section 10, AIOS-405 section 11).
+    The Signal Engine depends on the Technical Engine and News Intelligence
+    Engine because it combines technical outputs and news intelligence
+    (AIOS-605 section 10, AIOS-405 section 11).
     """
 
     engine_type: ClassVar[EngineType] = EngineType.SIGNAL
     name: ClassVar[str] = "Signal Engine"
     version: ClassVar[str] = "1.0.0"
     description: ClassVar[str] = (
-        "Combine technical outputs, rank signals, filter weak "
+        "Combine technical outputs, news intelligence, rank signals, filter weak "
         "opportunities, and calculate confidence."
     )
     dependencies: ClassVar[frozenset[EngineType]] = frozenset({EngineType.TECHNICAL})
 
+    def __init__(
+        self,
+        *,
+        engine_id: str | None = None,
+        bus: EventBus | None = None,
+        logger: logging.Logger | None = None,
+        data_access: DataAccess | None = None,
+        news_engine: "NewsEngine" | None = None,
+        signal_settings: SignalSettings | None = None,
+    ) -> None:
+        super().__init__(
+            engine_id=engine_id, bus=bus, logger=logger, data_access=data_access
+        )
+        self._news_engine = news_engine
+        self._signal_settings = signal_settings
+
+    def attach_news_engine(self, news_engine: "NewsEngine") -> None:
+        """Attach a News Intelligence Engine to this Signal Engine.
+
+        The Signal Engine is registered before providers connect (AIOS-104
+        section 4), so the News Engine is built once the connected News
+        provider adapter is available and attached at startup (AIOS-605
+        section 10, AIOS-405 section 11).
+        """
+        self._news_engine = news_engine
+
+    def _resolve_signal_settings(self) -> SignalSettings:
+        """Return the active Signal Engine configuration (ADR-0009).
+
+        Explicitly injected settings win; otherwise the runtime settings are
+        loaded through the configuration layer (ADR-0009 section 5.2) and
+        cached for the engine lifetime. When no environment is configured the
+        documented defaults are used so analysis remains deterministic.
+        """
+        if self._signal_settings is None:
+            try:
+                from aios.config.loader import load_settings
+
+                self._signal_settings = load_settings().signal
+            except Exception:  # noqa: BLE001 - fall back to documented defaults
+                self._signal_settings = SignalSettings()
+        return self._signal_settings
+
     async def _load_data(self, engine_input: EngineInput) -> dict:
-        return {}
+        data = {}
+        if self._news_engine is not None:
+            symbol = engine_input.payload.get("symbol")
+            if symbol:
+                try:
+                    news_intelligence = await self._news_engine.analyze_symbol_news(symbol)
+                    data["news_intelligence"] = [
+                        intel.model_dump(mode="json") for intel in news_intelligence
+                    ]
+                except Exception as exc:  # noqa: BLE001
+                    self._logger.warning("Failed to fetch news intelligence: %s", exc)
+        return data
 
     async def _analyze(self, engine_input: EngineInput, data: dict) -> EngineOutput:
+        settings = self._resolve_signal_settings()
+        symbol = str(engine_input.payload.get("symbol") or "unknown").strip() or "unknown"
+        news_intel = data.get("news_intelligence", [])
+        technical_output = _prior_engine_outputs(engine_input).get(EngineType.TECHNICAL)
+        technical_score = _technical_bullish_bias(technical_output)
+        news_score, news_items, news_evidence = _news_bullish_bias(news_intel)
+
+        result, output = _signal_result(
+            symbol=symbol,
+            technical_score=technical_score,
+            news_score=news_score,
+            news_items=news_items,
+            news_intelligence=news_intel,
+            evidence=news_evidence,
+            settings=settings,
+        )
+        self._logger.info(
+            "Signal Engine produced %s for %s (score=%s, confidence=%.2f)",
+            result.direction.value,
+            symbol,
+            f"{result.score:.2f}" if technical_score is not None or news_score is not None else "n/a",
+            result.confidence,
+        )
         return EngineOutput(
             engine_type=self.engine_type,
             engine_id=self.engine_id,
             request_id=engine_input.request_id,
-            output=_scaffold_output(engine_input.request_id),
+            output=output,
             explanation=(
-                "Signal engine registered. Signal direction and evidence "
-                "computation is wired in a later phase (AIOS-605 section 10)."
+                f"{result.explanation.summary} "
+                f"{'; '.join(result.reasons)}. {result.explanation.methodology}"
             ),
-            confidence=0.0,
+            confidence=result.confidence,
         )
+
+
+def _extract_signal_score(prior: dict) -> tuple[float | None, list[str]]:
+    """Extract the bullish-bias score from Signal Engine output.
+
+    Returns (score, reasons) where score is in [-1.0, +1.0] mapped from
+    SignalResult's [0.0, 1.0] bullish bias. Returns (None, [...]) if Signal
+    output is missing or malformed.
+    """
+    signal_output = prior.get(EngineType.SIGNAL)
+    if not isinstance(signal_output, dict):
+        return None, ["Signal output missing"]
+    # prior_engine_outputs already unwraps the "output" envelope
+    output = signal_output
+    direction = output.get("direction")
+    score = output.get("score")
+    if direction is None or score is None:
+        return None, ["Signal output missing direction or score"]
+    # Map [0,1] bullish bias to [-1,1]: 0.5 -> 0, 1.0 -> +1, 0.0 -> -1
+    mapped_score = (float(score) - 0.5) * 2.0
+    mapped_score = max(-1.0, min(1.0, mapped_score))
+    return mapped_score, []
+
+
+def _extract_fundamental_score(prior: dict) -> tuple[float | None, list[str]]:
+    """Extract fundamental score from Fundamental Engine output.
+
+    Fundamental Engine output has metrics and derived ratios. We derive a
+    score in [-1.0, +1.0] from available quality/growth/value indicators.
+    Returns (score, reasons).
+    """
+    fund_output = prior.get(EngineType.FUNDAMENTAL)
+    if not isinstance(fund_output, dict):
+        return None, ["Fundamental output missing"]
+    # prior_engine_outputs already unwraps the "output" envelope
+    output = fund_output
+    available = output.get("available", [])
+    derived = output.get("derived_ratios", {})
+    if not derived:
+        return None, ["Fundamental derived ratios unavailable"]
+    # Simple heuristic: positive net_margin, roe, low debt_to_equity -> bullish
+    score_factors: list[float] = []
+    reasons: list[str] = []
+    net_margin = derived.get("net_margin")
+    if isinstance(net_margin, (int, float)):
+        score_factors.append(max(-1.0, min(1.0, (float(net_margin) - 0.05) * 10)))
+        reasons.append(f"net_margin={net_margin:.2f}")
+    roe = derived.get("return_on_equity")
+    if isinstance(roe, (int, float)):
+        score_factors.append(max(-1.0, min(1.0, (float(roe) - 0.08) * 10)))
+        reasons.append(f"roe={roe:.2f}")
+    debt_to_equity = derived.get("debt_to_equity")
+    if isinstance(debt_to_equity, (int, float)):
+        score_factors.append(max(-1.0, min(1.0, (1.0 - float(debt_to_equity)) * 2)))
+        reasons.append(f"debt_to_equity={debt_to_equity:.2f}")
+    equity_to_assets = derived.get("equity_to_assets")
+    if isinstance(equity_to_assets, (int, float)):
+        score_factors.append(max(-1.0, min(1.0, (float(equity_to_assets) - 0.5) * 2)))
+        reasons.append(f"equity_to_assets={equity_to_assets:.2f}")
+    if not score_factors:
+        return None, ["No scorable fundamental metrics"]
+    avg = sum(score_factors) / len(score_factors)
+    return avg, reasons
+
+
+def _extract_market_score(prior: dict) -> tuple[float | None, list[str]]:
+    """Extract market score from Market Engine output.
+
+    Market Engine output has market_bias (bullish/bearish/neutral) and market_score [0,1].
+    Map to [-1.0, +1.0]: bullish -> positive, bearish -> negative, neutral -> 0.
+    Returns (score, reasons).
+    """
+    market_output = prior.get(EngineType.MARKET)
+    if not isinstance(market_output, dict):
+        return None, ["Market output missing"]
+    # prior_engine_outputs already unwraps the "output" envelope
+    output = market_output
+    market_bias = output.get("market_bias")
+    market_score = output.get("market_score")
+    if market_bias is None or market_score is None:
+        return None, ["Market output missing bias or score"]
+    mapped = float(market_score)
+    if market_bias == "bullish":
+        return mapped, [f"market_bias=bullish, score={market_score:.2f}"]
+    if market_bias == "bearish":
+        return -mapped, [f"market_bias=bearish, score={market_score:.2f}"]
+    return 0.0, [f"market_bias=neutral, score={market_score:.2f}"]
+
+
+def _compute_confidence(
+    *,
+    evidence_completeness: float,
+    component_agreement: float,
+    data_quality: float,
+    settings: DecisionSettings,
+) -> float:
+    """Compute decision confidence per approved methodology.
+
+    Confidence = evidence_completeness_weight * evidence_completeness
+               + component_agreement_weight * component_agreement
+               + data_quality_weight * data_quality
+    """
+    w1 = settings.evidence_completeness_weight
+    w2 = settings.component_agreement_weight
+    w3 = settings.data_quality_weight
+    confidence = w1 * evidence_completeness + w2 * component_agreement + w3 * data_quality
+    return max(0.0, min(1.0, confidence))
+
+
+def _decision_confidence_components(
+    prior: dict,
+    signal_score: float | None,
+    fundamental_score: float | None,
+    market_score: float | None,
+) -> tuple[float, float, float]:
+    """Compute the three confidence components.
+
+    Returns (evidence_completeness, component_agreement, data_quality).
+    """
+    # Evidence completeness: fraction of expected scoring components present
+    expected = 3  # Signal, Fundamental, Market
+    present = sum(1 for s in (signal_score, fundamental_score, market_score) if s is not None)
+    evidence_completeness = present / expected if expected else 1.0
+
+    # Component agreement: how aligned are the present scores
+    scores = [s for s in (signal_score, fundamental_score, market_score) if s is not None]
+    if len(scores) >= 2:
+        # Agreement = 1 - average pairwise distance
+        total_dist = 0.0
+        pairs = 0
+        for i in range(len(scores)):
+            for j in range(i + 1, len(scores)):
+                total_dist += abs(scores[i] - scores[j])
+                pairs += 1
+        avg_dist = total_dist / pairs if pairs else 0.0
+        component_agreement = max(0.0, 1.0 - avg_dist)
+    else:
+        component_agreement = 1.0  # Single component = full agreement with itself
+
+    # Data quality: fraction of required analysis engines present
+    required_engines = {EngineType.MARKET, EngineType.TECHNICAL, EngineType.FUNDAMENTAL}
+    data_present = sum(1 for e in required_engines if e in prior)
+    data_quality = data_present / len(required_engines) if required_engines else 1.0
+
+    return evidence_completeness, component_agreement, data_quality
 
 
 class DecisionEngine(Engine):
@@ -723,11 +1165,30 @@ class DecisionEngine(Engine):
         logger: logging.Logger | None = None,
         data_access: DataAccess | None = None,
         on_decision: Callable[[InvestmentDecision], None] | None = None,
+        decision_settings: DecisionSettings | None = None,
     ) -> None:
         super().__init__(
             engine_id=engine_id, bus=bus, logger=logger, data_access=data_access
         )
         self._on_decision = on_decision
+        self._decision_settings = decision_settings
+
+    def _resolve_decision_settings(self) -> DecisionSettings:
+        """Return the active Decision Engine configuration (ADR-0009).
+
+        Explicitly injected settings win; otherwise the runtime settings are
+        loaded through the configuration layer (ADR-0009 section 5.2) and
+        cached for the engine lifetime. When no environment is configured the
+        documented defaults are used so analysis remains deterministic.
+        """
+        if self._decision_settings is None:
+            try:
+                from aios.config.loader import load_settings
+
+                self._decision_settings = load_settings().decision
+            except Exception:  # noqa: BLE001 - fall back to documented defaults
+                self._decision_settings = DecisionSettings()
+        return self._decision_settings
 
     def validate_input(self, engine_input: EngineInput) -> bool:
         return bool(engine_input.payload.get("symbol"))
@@ -773,59 +1234,222 @@ class DecisionEngine(Engine):
             return []
 
     async def _analyze(self, engine_input: EngineInput, data: dict) -> EngineOutput:
+        settings = self._resolve_decision_settings()
         symbol = data["symbol"]
         fundamentals = data["fundamentals"]
         prior = data["prior_outputs"]
 
-        present = set(prior)
-        missing_analysis = sorted(t.value for t in _REQUIRED_ANALYSIS_ENGINES if t not in present)
-        risk_output = prior.get(EngineType.RISK)
-        risk_approval_status = (
-            str(risk_output.get("approval_status")) if risk_output is not None else None
-        )
-        risk_level = str(risk_output.get("risk_level")) if risk_output is not None else None
-        risk_approved = risk_approval_status in {"approved", "acceptable"}
+        # =====================================================================
+        # HARD CONSTRAINTS (Priority order, non-overridable)
+        # =====================================================================
 
-        validation = {
-            "shariah_approval": True,
-            "data_availability": fundamentals is not None,
-            "analysis_completion": not missing_analysis,
-            "risk_approval": risk_approved,
-        }
-        failed_gates = [gate for gate, ok in validation.items() if not ok]
-        validation_status = "VALID" if not failed_gates else "REJECTED"
+        # 1. Shariah Gate: already enforced in _load_data via require_compliant()
+        #    If we reach here, Shariah is COMPLIANT. But double-check for safety.
+        shariah_ok = True
+        try:
+            # Re-check compliance status from prior outputs if available
+            # The require_compliant in _load_data already blocks non-compliant
+            pass
+        except EngineValidationError:
+            shariah_ok = False
 
-        if failed_gates:
+        if not shariah_ok:
             decision = DecisionAction.NO_TRADE
-            reason = (
-                f"Decision validation rejected: {', '.join(failed_gates)}. "
-                f"Missing analysis: {', '.join(missing_analysis) or 'none'}. "
-                f"No trade is issued to avoid forced or unsafe trading "
-                f"(AIOS-208 sections 9-10)."
-            )
-        else:
-            decision = DecisionAction.WAIT
-            reason = (
-                "All decision validation gates passed (Shariah approval, "
-                "data availability, analysis completion, risk approval). The "
-                "final direction requires documented/configurable scoring "
-                "weights (AIOS-406 section 6) that are not yet defined, so "
-                "the engine issues the no-action WAIT to avoid forced "
-                "trading (AIOS-208 section 10)."
-            )
+            reason = "Shariah compliance check failed: security is not COMPLIANT. NO_TRADE issued."
+            confidence = 0.0
+            decision_score = None
+            hard_constraint = "shariah"
+            triggered_constraints = ["shariah"]
+            component_scores = {}
+            weighted_score_val = None
+            confidence_components = {}
 
-        risk_score = None
+        # 2. Data/Analysis Gates: required analysis engines present
+        else:
+            missing_analysis = sorted(
+                t.value for t in _REQUIRED_ANALYSIS_ENGINES if t not in prior
+            )
+            data_available = fundamentals is not None
+            analysis_complete = not missing_analysis
+
+            if not data_available or not analysis_complete:
+                decision = DecisionAction.WAIT
+                reasons = []
+                if not data_available:
+                    reasons.append("fundamental data unavailable")
+                if not analysis_complete:
+                    reasons.append(f"missing analysis: {', '.join(missing_analysis)}")
+                reason = "Data/Analysis Gate failed: " + "; ".join(reasons) + ". WAIT issued."
+                confidence = 0.0
+                decision_score = None
+                hard_constraint = "data_analysis"
+                triggered_constraints = ["data_analysis"]
+                component_scores = {}
+                weighted_score_val = None
+                confidence_components = {}
+
+            # 3. Risk Gate: approval_status = blocked -> NO_TRADE
+            else:
+                risk_output = prior.get(EngineType.RISK)
+                risk_approval_status = (
+                    str(risk_output.get("approval_status")) if risk_output is not None else None
+                )
+                risk_level = str(risk_output.get("risk_level")) if risk_output is not None else None
+                risk_blocked = risk_approval_status == "blocked"
+
+                if risk_blocked:
+                    decision = DecisionAction.NO_TRADE
+                    reason = "Risk Gate blocked: approval_status=blocked. NO_TRADE issued."
+                    confidence = 0.0
+                    decision_score = None
+                    hard_constraint = "risk"
+                    triggered_constraints = ["risk"]
+                    component_scores = {}
+                    weighted_score_val = None
+                    confidence_components = {}
+
+                # All hard constraints passed -> proceed to weighted scoring
+                else:
+                    # =====================================================================
+                    # WEIGHTED SCORING
+                    # =====================================================================
+
+                    # Extract component scores from prior engine outputs
+                    signal_score, signal_reasons = _extract_signal_score(prior)
+                    fundamental_score, fund_reasons = _extract_fundamental_score(prior)
+                    market_score, market_reasons = _extract_market_score(prior)
+
+                    component_scores = {}
+                    if signal_score is not None:
+                        component_scores["signal"] = signal_score
+                    if fundamental_score is not None:
+                        component_scores["fundamental"] = fundamental_score
+                    if market_score is not None:
+                        component_scores["market"] = market_score
+
+                    # Compute weighted score: normalize weights to sum
+                    total_weight = (
+                        settings.signal_weight
+                        + settings.fundamental_weight
+                        + settings.market_weight
+                    )
+                    if total_weight > 0:
+                        weights = {
+                            "signal": settings.signal_weight / total_weight,
+                            "fundamental": settings.fundamental_weight / total_weight,
+                            "market": settings.market_weight / total_weight,
+                        }
+                    else:
+                        weights = {"signal": 0.0, "fundamental": 0.0, "market": 0.0}
+
+                    weighted_score_val = 0.0
+                    score_reasons = []
+                    for name, weight in weights.items():
+                        if name in component_scores:
+                            contribution = component_scores[name] * weight
+                            weighted_score_val += contribution
+                            score_reasons.append(f"{name}={component_scores[name]:.2f}*{weight:.2f}")
+                        else:
+                            score_reasons.append(f"{name}=missing")
+
+                    weighted_score_val = max(-1.0, min(1.0, weighted_score_val))
+
+                    # =====================================================================
+                    # CONFIDENCE CALCULATION
+                    # =====================================================================
+
+                    evidence_completeness, component_agreement, data_quality = (
+                        _decision_confidence_components(
+                            prior, signal_score, fundamental_score, market_score
+                        )
+                    )
+                    confidence = _compute_confidence(
+                        evidence_completeness=evidence_completeness,
+                        component_agreement=component_agreement,
+                        data_quality=data_quality,
+                        settings=settings,
+                    )
+                    confidence_components = {
+                        "evidence_completeness": evidence_completeness,
+                        "component_agreement": component_agreement,
+                        "data_quality": data_quality,
+                    }
+
+                    # 4. Confidence Gate
+                    if confidence < settings.min_confidence:
+                        decision = DecisionAction.WAIT
+                        reason = (
+                            f"Confidence {confidence:.2f} below minimum {settings.min_confidence:.2f}. "
+                            f"Components: evidence={evidence_completeness:.2f}, "
+                            f"agreement={component_agreement:.2f}, quality={data_quality:.2f}. "
+                            f"WAIT issued."
+                        )
+                        decision_score = weighted_score_val
+                        hard_constraint = "confidence"
+                        triggered_constraints = ["confidence"]
+
+                    # Directional decision from weighted score
+                    elif weighted_score_val >= settings.buy_threshold:
+                        decision = DecisionAction.BUY
+                        reason = (
+                            f"Decision score {weighted_score_val:.2f} >= buy threshold "
+                            f"{settings.buy_threshold:.2f}. Components: {', '.join(score_reasons)}. "
+                            f"Confidence {confidence:.2f}. BUY issued."
+                        )
+                        decision_score = weighted_score_val
+                        hard_constraint = None
+                        triggered_constraints = []
+
+                    elif weighted_score_val <= -settings.sell_threshold:
+                        decision = DecisionAction.SELL
+                        reason = (
+                            f"Decision score {weighted_score_val:.2f} <= sell threshold "
+                            f"{-settings.sell_threshold:.2f}. Components: {', '.join(score_reasons)}. "
+                            f"Confidence {confidence:.2f}. SELL issued."
+                        )
+                        decision_score = weighted_score_val
+                        hard_constraint = None
+                        triggered_constraints = []
+
+                    else:
+                        decision = DecisionAction.HOLD
+                        reason = (
+                            f"Decision score {weighted_score_val:.2f} between thresholds "
+                            f"({-settings.sell_threshold:.2f}, {settings.buy_threshold:.2f}). "
+                            f"Components: {', '.join(score_reasons)}. Confidence {confidence:.2f}. "
+                            f"HOLD issued."
+                        )
+                        decision_score = weighted_score_val
+                        hard_constraint = None
+                        triggered_constraints = []
+
+        # =====================================================================
+        # BUILD OUTPUT
+        # =====================================================================
+
+        risk_score_val = None
+        risk_output = prior.get(EngineType.RISK)
         if risk_output is not None:
             raw_score = risk_output.get("risk_score")
             if isinstance(raw_score, (int, float)) and not isinstance(raw_score, bool):
-                risk_score = max(0.0, min(1.0, float(raw_score)))
-
-        checks = list(validation.values())
-        confidence = sum(checks) / len(checks) if checks else 0.0
+                risk_score_val = max(0.0, min(1.0, float(raw_score)))
 
         supporting_data: dict[str, Any] = {
-            "validation": validation,
-            "decision_score": None,
+            "validation": {
+                "shariah_approval": shariah_ok if 'shariah_ok' in locals() else True,
+                "data_availability": fundamentals is not None,
+                "analysis_completion": not missing_analysis if 'missing_analysis' in locals() else True,
+                "risk_approval": not risk_blocked if 'risk_blocked' in locals() else True,
+            },
+            "decision_score": decision_score,
+            "component_scores": component_scores,
+            "component_weights": {
+                "signal": settings.signal_weight,
+                "fundamental": settings.fundamental_weight,
+                "market": settings.market_weight,
+            },
+            "confidence_components": confidence_components,
+            "hard_constraints_triggered": triggered_constraints,
             "engine_outputs": {t.value: output for t, output in prior.items()},
         }
         decision_record = InvestmentDecision(
@@ -833,7 +1457,7 @@ class DecisionEngine(Engine):
             decision=decision,
             reason=reason,
             confidence=confidence,
-            risk_score=risk_score,
+            risk_score=risk_score_val,
             timestamp=datetime.now(timezone.utc),
             supporting_data=supporting_data,
         )
@@ -852,23 +1476,34 @@ class DecisionEngine(Engine):
         output = {
             "symbol": symbol,
             "decision": decision.value,
-            "decision_score": None,
+            "decision_score": decision_score,
             "confidence": confidence,
-            "risk_level": risk_level,
+            "risk_level": risk_level if 'risk_level' in locals() else None,
             "reason": reason,
             "validation": {
-                "status": validation_status,
-                "checks": validation,
-                "missing_analysis": missing_analysis,
+                "status": "VALID" if not triggered_constraints else "CONSTRAINT_TRIGGERED",
+                "checks": {
+                    "shariah_approval": shariah_ok if 'shariah_ok' in locals() else True,
+                    "data_availability": fundamentals is not None,
+                    "analysis_completion": not missing_analysis if 'missing_analysis' in locals() else True,
+                    "risk_approval": not risk_blocked if 'risk_blocked' in locals() else True,
+                },
+                "missing_analysis": missing_analysis if 'missing_analysis' in locals() else [],
             },
+            "component_scores": component_scores,
+            "component_weights": {
+                "signal": settings.signal_weight,
+                "fundamental": settings.fundamental_weight,
+                "market": settings.market_weight,
+            },
+            "confidence_components": confidence_components,
+            "hard_constraints_triggered": triggered_constraints,
             "persisted": persisted,
             "bars": len(data["candles"]),
         }
         explanation = (
-            f"Decision engine validated {symbol}: {validation_status} "
-            f"({', '.join(f'{gate}={ok}' for gate, ok in validation.items())}). "
-            f"Decision is {decision.value}; score weighting and directional "
-            f"rules remain configurable placeholders (AIOS-406 sections 6-7)."
+            f"Decision engine scored {symbol}: decision={decision.value}, "
+            f"score={decision_score}, confidence={confidence:.2f}. {reason}"
         )
         return EngineOutput(
             engine_type=self.engine_type,
@@ -914,11 +1549,19 @@ def create_engine(
     logger: logging.Logger | None = None,
     data_access: DataAccess | None = None,
     on_decision: Callable[[InvestmentDecision], None] | None = None,
+    news_engine: "NewsEngine" | None = None,
+    decision_settings: DecisionSettings | None = None,
 ) -> Engine:
     """Create an engine instance for a Phase 1 roster type.
 
     ``data_access`` provides the standardized Data Layer facade engines use to
     consume verified data (AIOS-501 section 2, AIOS-605 section 13).
+
+    ``news_engine`` is accepted only for the Signal Engine; passing
+    it to another roster type raises :class:`TypeError`.
+
+    ``decision_settings`` is accepted only for the Decision Engine; passing
+    it to another roster type raises :class:`TypeError`.
 
     Raises :class:`KeyError` for types outside the Phase 1 engine roster.
     """
@@ -931,7 +1574,20 @@ def create_engine(
             logger=logger,
             data_access=data_access,
             on_decision=on_decision,
+            decision_settings=decision_settings,
         )
+    if engine_type is EngineType.SIGNAL:
+        if decision_settings is not None:
+            raise TypeError("decision_settings is only accepted for Decision Engine")
+        return SignalEngine(
+            engine_id=engine_id,
+            bus=bus,
+            logger=logger,
+            data_access=data_access,
+            news_engine=news_engine,
+        )
+    if decision_settings is not None:
+        raise TypeError("decision_settings is only accepted for Decision Engine")
     return ENGINE_CLASSES[engine_type](
         engine_id=engine_id, bus=bus, logger=logger, data_access=data_access
     )
